@@ -14,10 +14,12 @@ public:
     int Stop() override;
     void* GetRenderer() override;
     void Process() override;
+    void Reset();
 
 private:
     ExamplePluginSdk::InputPort<AutomotiveSensors::PointCloud> point_cloud_input_{"PointCloud"};
     ExamplePluginSdk::OutputPort<AutomotiveSensors::ObjectList> object_list_output_{"ObjectListOutput"};
+    ExamplePluginSdk::Property<float> min_confidence_{"MinConfidence", "Minimum Confidence"};
 
     std::unique_ptr<AutomotiveSensors::PointCloud> point_cloud_;
     std::unique_ptr<AutomotiveSensors::ObjectList> object_list_;

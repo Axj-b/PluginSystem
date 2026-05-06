@@ -3,9 +3,10 @@
 
 #include <pluginsystem/plugin_api.h>
 
-#include <cstring>
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -14,6 +15,7 @@ namespace {
 struct DescriptorStore {
     ExamplePluginSdk::PluginDescription description;
     std::vector<ps_port_descriptor> ports;
+    std::vector<ps_property_descriptor> properties;
     std::vector<ps_entrypoint_descriptor> entrypoints;
     std::vector<std::vector<const char*>> input_port_ids;
     std::vector<std::vector<const char*>> output_port_ids;
@@ -36,6 +38,19 @@ struct DescriptorStore {
                 port.byte_size,
                 port.alignment,
                 port.type_name.c_str(),
+            });
+        }
+
+        properties.reserve(description.properties.size());
+        for (const auto& property : description.properties) {
+            properties.push_back(ps_property_descriptor{
+                static_cast<std::uint32_t>(sizeof(ps_property_descriptor)),
+                property.id.c_str(),
+                property.name.c_str(),
+                property.type_name.c_str(),
+                property.byte_size,
+                property.readable ? 1u : 0u,
+                property.writable ? 1u : 0u,
             });
         }
 
@@ -80,8 +95,8 @@ struct DescriptorStore {
         plugin.entrypoint_count = static_cast<std::uint32_t>(entrypoints.size());
         plugin.ports = ports.data();
         plugin.port_count = static_cast<std::uint32_t>(ports.size());
-        plugin.properties = nullptr;
-        plugin.property_count = 0;
+        plugin.properties = properties.data();
+        plugin.property_count = static_cast<std::uint32_t>(properties.size());
         plugin.raw_property_block_size = 0;
     }
 };
@@ -103,13 +118,18 @@ int32_t invoke(void* instance, const char* entrypoint_id, const ps_invocation_co
         return PS_INVALID_ARGUMENT;
     }
 
-    if (std::strcmp(entrypoint_id, "Process") != 0) {
+    const auto& entrypoints = descriptor_store().description.entrypoints;
+    const std::string_view requested_entrypoint{entrypoint_id};
+    const auto found = std::find_if(entrypoints.begin(), entrypoints.end(), [requested_entrypoint](const auto& entrypoint) {
+        return entrypoint.id == requested_entrypoint;
+    });
+    if (found == entrypoints.end()) {
         return PS_NOT_FOUND;
     }
 
     try {
         ExamplePluginSdk::PluginInvocationScope invocation_scope{context};
-        adapter->plugin->Process();
+        found->invoke(*adapter->plugin);
         return PS_OK;
     } catch (...) {
         return PS_ERROR;
@@ -154,6 +174,9 @@ extern "C" PLUGINSYSTEM_EXPORT int32_t pluginsystem_create_plugin_instance(
 
     const auto& store = descriptor_store();
     if (config->port_count != store.plugin.port_count) {
+        return PS_ERROR;
+    }
+    if (config->property_count != store.plugin.property_count) {
         return PS_ERROR;
     }
 

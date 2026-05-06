@@ -3,6 +3,7 @@
 #include <pluginsystem/plugin_api.h>
 
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace ExamplePluginSdk {
+
+class IPlugin;
 
 enum class PortDirection {
     Input,
@@ -31,6 +34,14 @@ struct TypeName {
     }
 };
 
+template <>
+struct TypeName<float> {
+    static std::string value()
+    {
+        return "float";
+    }
+};
+
 struct PortDescription {
     std::string id;
     std::string name;
@@ -41,6 +52,15 @@ struct PortDescription {
     std::uint64_t alignment{0};
 };
 
+struct PropertyDescription {
+    std::string id;
+    std::string name;
+    std::string type_name;
+    std::uint64_t byte_size{0};
+    bool readable{true};
+    bool writable{true};
+};
+
 struct EntrypointDescription {
     std::string id;
     std::string name;
@@ -49,6 +69,7 @@ struct EntrypointDescription {
     std::vector<std::string> input_port_ids;
     std::vector<std::string> output_port_ids;
     std::vector<std::string> trigger_port_ids;
+    std::function<void(IPlugin&)> invoke;
 };
 
 struct PluginDescription {
@@ -58,6 +79,7 @@ struct PluginDescription {
     std::string description;
     ps_concurrency_policy concurrency{PS_CONCURRENCY_ENTRYPOINT_SERIALIZED};
     std::vector<PortDescription> ports;
+    std::vector<PropertyDescription> properties;
     std::vector<EntrypointDescription> entrypoints;
 };
 
@@ -163,6 +185,59 @@ public:
         const auto result = context.write_port(context.user_data, id_.c_str(), &value, sizeof(T));
         if (result != PS_OK) {
             throw std::runtime_error{"Failed to write output port '" + id_ + "'."};
+        }
+    }
+
+private:
+    std::string id_;
+    std::string name_;
+};
+
+template <typename T>
+class Property {
+public:
+    using ValueType = T;
+
+    static_assert(std::is_trivially_copyable_v<T>, "Shared-memory property types must be trivially copyable.");
+
+    explicit Property(std::string id, std::string name = {})
+        : id_{std::move(id)}
+        , name_{name.empty() ? id_ : std::move(name)}
+    {
+    }
+
+    const std::string& id() const noexcept
+    {
+        return id_;
+    }
+
+    const std::string& name() const noexcept
+    {
+        return name_;
+    }
+
+    void read(T& value) const
+    {
+        const auto& context = PluginInvocationScope::current();
+        const auto result = context.read_property(context.user_data, id_.c_str(), &value, sizeof(T));
+        if (result != PS_OK) {
+            throw std::runtime_error{"Failed to read property '" + id_ + "'."};
+        }
+    }
+
+    T read() const
+    {
+        T value{};
+        read(value);
+        return value;
+    }
+
+    void write(const T& value) const
+    {
+        const auto& context = PluginInvocationScope::current();
+        const auto result = context.write_property(context.user_data, id_.c_str(), &value, sizeof(T));
+        if (result != PS_OK) {
+            throw std::runtime_error{"Failed to write property '" + id_ + "'."};
         }
     }
 
@@ -279,18 +354,28 @@ public:
         register_port(port, PortDirection::Output, access_mode);
     }
 
+    template <typename T>
+    void property(Property<T> TPlugin::* property, bool readable = true, bool writable = true)
+    {
+        const auto& property_instance = probe_.*property;
+        register_property_description<T>(property_instance.id(), property_instance.name(), readable, writable);
+    }
+
     EntrypointBuilder entrypoint(std::string id, void (TPlugin::* method)())
     {
-        (void)method;
+        auto name = id;
 
         description_.entrypoints.push_back(EntrypointDescription{
-            id,
             std::move(id),
+            std::move(name),
             {},
             PS_CONCURRENCY_ENTRYPOINT_SERIALIZED,
             {},
             {},
             {},
+            [method](IPlugin& plugin) {
+                (static_cast<TPlugin&>(plugin).*method)();
+            },
         });
 
         return EntrypointBuilder{*this, description_.entrypoints.size() - 1};
@@ -338,6 +423,21 @@ private:
     }
 
     template <typename T>
+    void register_property_description(std::string id, std::string name, bool readable, bool writable)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "Shared-memory property types must be trivially copyable.");
+
+        description_.properties.push_back(PropertyDescription{
+            std::move(id),
+            std::move(name),
+            TypeName<T>::value(),
+            sizeof(T),
+            readable,
+            writable,
+        });
+    }
+
+    template <typename T>
     std::string port_id(InputPort<T> TPlugin::* port) const
     {
         return (probe_.*port).id();
@@ -364,4 +464,3 @@ inline ps_port_access_mode to_c_access_mode(PortAccessMode access_mode)
 }
 
 } // namespace ExamplePluginSdk
-

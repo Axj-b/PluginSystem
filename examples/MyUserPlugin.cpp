@@ -15,6 +15,7 @@ void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& 
 
     api.input(&MyUserPlugin::point_cloud_input_, ExamplePluginSdk::PortAccessMode::DirectBlock);
     api.output(&MyUserPlugin::object_list_output_, ExamplePluginSdk::PortAccessMode::BufferedLatest);
+    api.property(&MyUserPlugin::min_confidence_, true, true);
 
     api.entrypoint("Process", &MyUserPlugin::Process)
         .description("Runs one object-tracking step from PointCloud to ObjectListOutput")
@@ -22,6 +23,11 @@ void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& 
         .reads(&MyUserPlugin::point_cloud_input_)
         .writes(&MyUserPlugin::object_list_output_)
         .triggeredBy(&MyUserPlugin::point_cloud_input_);
+
+    api.entrypoint("Reset", &MyUserPlugin::Reset)
+        .description("Clears the current output object list")
+        .concurrency(PS_CONCURRENCY_ENTRYPOINT_SERIALIZED)
+        .writes(&MyUserPlugin::object_list_output_);
 }
 
 int MyUserPlugin::Init()
@@ -54,13 +60,14 @@ void MyUserPlugin::Process()
         throw std::runtime_error{"Plugin was not initialized."};
     }
 
+    const auto min_confidence = min_confidence_.read();
     point_cloud_input_.read(*point_cloud_);
 
     *object_list_ = {};
     object_list_->timestamp = point_cloud_->timestamp;
     object_list_->sensorId = point_cloud_->sensorId;
 
-    if (started_ && point_cloud_->pointCount > 0) {
+    if (started_ && point_cloud_->pointCount > 0 && point_cloud_->points[0].intensity >= min_confidence) {
         const auto object_count = std::min<std::uint32_t>(point_cloud_->pointCount, 1);
         object_list_->objectCount = object_count;
 
@@ -80,5 +87,15 @@ void MyUserPlugin::Process()
         object.objectClass = 1;
     }
 
+    object_list_output_.write(*object_list_);
+}
+
+void MyUserPlugin::Reset()
+{
+    if (!object_list_) {
+        throw std::runtime_error{"Plugin was not initialized."};
+    }
+
+    *object_list_ = {};
     object_list_output_.write(*object_list_);
 }
