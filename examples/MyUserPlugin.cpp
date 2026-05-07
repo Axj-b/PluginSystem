@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& api)
+void MyUserPlugin::Register(pluginsystem::sdk::PluginRegistration<MyUserPlugin>& api)
 {
     api.set_plugin(
         "example.greeter",
@@ -13,8 +13,8 @@ void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& 
         PS_CONCURRENCY_INSTANCE_SERIALIZED
     );
 
-    api.input(&MyUserPlugin::point_cloud_input_, ExamplePluginSdk::PortAccessMode::DirectBlock);
-    api.output(&MyUserPlugin::object_list_output_, ExamplePluginSdk::PortAccessMode::BufferedLatest);
+    api.input(&MyUserPlugin::point_cloud_input_, pluginsystem::sdk::PortAccessMode::DirectBlock);
+    api.output(&MyUserPlugin::object_list_output_, pluginsystem::sdk::PortAccessMode::BufferedLatest);
     api.property(&MyUserPlugin::min_confidence_, true, true);
 
     api.entrypoint("Process", &MyUserPlugin::Process)

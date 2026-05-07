@@ -1,25 +1,26 @@
 #pragma once
 
-#include "IPlugin.h"
 #include "Samples.h"
+
+#include <pluginsystem/sdk.hpp>
 
 #include <memory>
 
-class MyUserPlugin final : public ExamplePluginSdk::IPlugin {
+class MyUserPlugin final : public pluginsystem::sdk::PluginBase {
 public:
-    static void Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& api);
+    static void Register(pluginsystem::sdk::PluginRegistration<MyUserPlugin>& api);
 
     int Init() override;
     int Start() override;
     int Stop() override;
     void* GetRenderer() override;
-    void Process() override;
+    void Process();
     void Reset();
 
 private:
-    ExamplePluginSdk::InputPort<AutomotiveSensors::PointCloud> point_cloud_input_{"PointCloud"};
-    ExamplePluginSdk::OutputPort<AutomotiveSensors::ObjectList> object_list_output_{"ObjectListOutput"};
-    ExamplePluginSdk::Property<float> min_confidence_{"MinConfidence", "Minimum Confidence"};
+    pluginsystem::sdk::InputPort<AutomotiveSensors::PointCloud> point_cloud_input_{"PointCloud"};
+    pluginsystem::sdk::OutputPort<AutomotiveSensors::ObjectList> object_list_output_{"ObjectListOutput"};
+    pluginsystem::sdk::Property<float> min_confidence_{"MinConfidence", "Minimum Confidence"};
 
     std::unique_ptr<AutomotiveSensors::PointCloud> point_cloud_;
     std::unique_ptr<AutomotiveSensors::ObjectList> object_list_;

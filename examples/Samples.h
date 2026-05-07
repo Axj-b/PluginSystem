@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IPlugin.h"
+#include <pluginsystem/sdk/type_name.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -56,7 +56,7 @@ namespace AutomotiveSensors
 
 } // namespace AutomotiveSensors
 
-namespace ExamplePluginSdk {
+namespace pluginsystem::sdk {
 
 template <>
 struct TypeName<AutomotiveSensors::PointCloud> {
@@ -74,4 +74,4 @@ struct TypeName<AutomotiveSensors::ObjectList> {
     }
 };
 
-} // namespace ExamplePluginSdk
+} // namespace pluginsystem::sdk
