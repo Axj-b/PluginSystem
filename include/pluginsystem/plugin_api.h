@@ -19,35 +19,99 @@
 extern "C" {
 #endif
 
+/*
+ * Result codes returned by PluginSystem ABI functions and callback functions.
+ * Keep these values stable because they cross the DLL boundary.
+ */
 typedef enum ps_result {
+    /* Operation completed successfully. */
     PS_OK = 0,
+
+    /* Generic failure when no more specific result code applies. */
     PS_ERROR = 1,
+
+    /* Requested plugin, entrypoint, port, property, or service was not found. */
     PS_NOT_FOUND = 2,
+
+    /* A required pointer, ABI version, struct size, name, or argument value is invalid. */
     PS_INVALID_ARGUMENT = 3,
+
+    /* Caller-provided output storage is too small for the requested data. */
     PS_BUFFER_TOO_SMALL = 4
 } ps_result;
 
+/*
+ * Severity level for messages sent from plugins to the host log callback.
+ * The host decides how these levels are filtered or displayed.
+ */
 typedef enum ps_log_level {
+    /* Very detailed diagnostic information, usually disabled by default. */
     PS_LOG_TRACE = 0,
+
+    /* Debug information useful while developing or diagnosing a plugin. */
     PS_LOG_DEBUG = 1,
+
+    /* Normal operational information that may be useful to users or logs. */
     PS_LOG_INFO = 2,
+
+    /* Recoverable problem or suspicious state. Processing may continue. */
     PS_LOG_WARNING = 3,
+
+    /* Failure or serious problem that likely prevents correct processing. */
     PS_LOG_ERROR = 4
 } ps_log_level;
 
+/*
+ * Direction of a plugin port from the plugin instance's point of view.
+ * The host creates and owns all port shared-memory blocks.
+ */
 typedef enum ps_port_direction {
+    /* Plugin reads data from this port. Usually produced by another node or the host. */
     PS_PORT_INPUT = 0,
+
+    /* Plugin writes data to this port. Usually consumed by another node, UI, or host. */
     PS_PORT_OUTPUT = 1
 } ps_port_direction;
 
+/*
+ * Shared-memory access model for a port payload.
+ * v1 ports are fixed-size; PluginSystem does not interpret payload contents.
+ */
 typedef enum ps_port_access_mode {
+    /*
+     * Direct fixed-size memory block.
+     * Readers and writers operate on the single host-owned payload block.
+     */
     PS_PORT_DIRECT_BLOCK = 0,
+
+    /*
+     * Latest-sample buffer.
+     * Each write copies one complete fixed-size sample; readers get the newest sample.
+     */
     PS_PORT_BUFFERED_LATEST = 1
 } ps_port_access_mode;
 
+/*
+ * Declares how PluginSystem should serialize concurrent entrypoint calls.
+ * This protects plugin instances according to the plugin's advertised capability.
+ */
 typedef enum ps_concurrency_policy {
+    /*
+     * Only one entrypoint call may run on this plugin instance at a time.
+     * Use this for plugins with shared mutable instance state.
+     */
     PS_CONCURRENCY_INSTANCE_SERIALIZED = 0,
+
+    /*
+     * Calls to the same entrypoint are serialized, but different entrypoints may run
+     * concurrently on the same instance.
+     */
     PS_CONCURRENCY_ENTRYPOINT_SERIALIZED = 1,
+
+    /*
+     * PluginSystem does not serialize calls for this instance or entrypoint.
+     * The plugin is responsible for protecting all shared state it touches.
+     */
     PS_CONCURRENCY_FULLY_CONCURRENT = 2
 } ps_concurrency_policy;
 

@@ -10,7 +10,7 @@ void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& 
         "User Object Tracker Plugin",
         "1.0.0",
         "Example user-authored plugin wrapped by the PluginSystem C ABI adapter",
-        PS_CONCURRENCY_ENTRYPOINT_SERIALIZED
+        PS_CONCURRENCY_INSTANCE_SERIALIZED
     );
 
     api.input(&MyUserPlugin::point_cloud_input_, ExamplePluginSdk::PortAccessMode::DirectBlock);
@@ -19,14 +19,18 @@ void MyUserPlugin::Register(ExamplePluginSdk::PluginRegistration<MyUserPlugin>& 
 
     api.entrypoint("Process", &MyUserPlugin::Process)
         .description("Runs one object-tracking step from PointCloud to ObjectListOutput")
-        .concurrency(PS_CONCURRENCY_ENTRYPOINT_SERIALIZED)
         .reads(&MyUserPlugin::point_cloud_input_)
         .writes(&MyUserPlugin::object_list_output_)
         .triggeredBy(&MyUserPlugin::point_cloud_input_);
 
+    api.entrypoint("Start", &MyUserPlugin::Start)
+        .description("Starts the plugin, allowing Process to produce output");
+
+    api.entrypoint("Stop", &MyUserPlugin::Stop)
+        .description("Stops the plugin so Process no longer produces output");
+
     api.entrypoint("Reset", &MyUserPlugin::Reset)
         .description("Clears the current output object list")
-        .concurrency(PS_CONCURRENCY_ENTRYPOINT_SERIALIZED)
         .writes(&MyUserPlugin::object_list_output_);
 }
 

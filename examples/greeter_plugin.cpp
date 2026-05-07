@@ -129,8 +129,7 @@ int32_t invoke(void* instance, const char* entrypoint_id, const ps_invocation_co
 
     try {
         ExamplePluginSdk::PluginInvocationScope invocation_scope{context};
-        found->invoke(*adapter->plugin);
-        return PS_OK;
+        return found->invoke(*adapter->plugin);
     } catch (...) {
         return PS_ERROR;
     }
@@ -184,9 +183,6 @@ extern "C" PLUGINSYSTEM_EXPORT int32_t pluginsystem_create_plugin_instance(
     adapter->plugin = std::make_unique<MyUserPlugin>();
 
     if (adapter->plugin->Init() != PS_OK) {
-        return PS_ERROR;
-    }
-    if (adapter->plugin->Start() != PS_OK) {
         return PS_ERROR;
     }
 

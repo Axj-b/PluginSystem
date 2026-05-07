@@ -77,7 +77,7 @@ void print_setup_metric(std::string_view label, std::chrono::nanoseconds elapsed
 void print_repeated_metric(std::string_view label, const MetricAccumulator& metric, std::uint64_t iterations)
 {
     std::cout << "  " << label << ": total "
-              << std::fixed << std::setprecision(3)
+              << std::fixed << std::setprecision(1)
               << metric.total_microseconds()
               << " us, avg "
               << metric.average_microseconds(iterations)
@@ -229,7 +229,23 @@ int main(int argc, char** argv)
             dll_properties.write("MinConfidence", &value, sizeof(value));
         };
 
-        float min_confidence = 0.95F;
+        float min_confidence = 0.5F;
+        write_min_confidence(min_confidence);
+        point_cloud_port.write(point_cloud.get(), sizeof(*point_cloud));
+        if (dll_instance->invoke("Process") != PS_OK) {
+            throw std::runtime_error{"Process invocation failed."};
+        }
+        object_list_output_port.read(object_list.get(), sizeof(*object_list));
+        std::cout << "Pre-start object count: " << object_list->objectCount << '\n';
+        if (object_list->objectCount != 0) {
+            throw std::runtime_error{"Process produced output before Start was invoked."};
+        }
+
+        if (dll_instance->invoke("Start") != PS_OK) {
+            throw std::runtime_error{"Start invocation failed."};
+        }
+
+        min_confidence = 0.95F;
         write_min_confidence(min_confidence);
         point_cloud_port.write(point_cloud.get(), sizeof(*point_cloud));
         if (dll_instance->invoke("Process") != PS_OK) {
@@ -295,6 +311,10 @@ int main(int argc, char** argv)
         }
         if (!unknown_entrypoint_failed) {
             throw std::runtime_error{"Unknown entrypoint did not fail."};
+        }
+
+        if (dll_instance->invoke("Stop") != PS_OK) {
+            throw std::runtime_error{"Stop invocation failed."};
         }
 
         pluginsystem::PluginInstanceConfig builtin_config;

@@ -69,7 +69,7 @@ struct EntrypointDescription {
     std::vector<std::string> input_port_ids;
     std::vector<std::string> output_port_ids;
     std::vector<std::string> trigger_port_ids;
-    std::function<void(IPlugin&)> invoke;
+    std::function<int32_t(IPlugin&)> invoke;
 };
 
 struct PluginDescription {
@@ -361,20 +361,31 @@ public:
         register_property_description<T>(property_instance.id(), property_instance.name(), readable, writable);
     }
 
-    EntrypointBuilder entrypoint(std::string id, void (TPlugin::* method)())
+    template <typename TResult>
+    EntrypointBuilder entrypoint(std::string id, TResult (TPlugin::* method)())
     {
+        static_assert(
+            std::is_same_v<TResult, void> || std::is_same_v<TResult, int>,
+            "Plugin entrypoints must return void or int."
+        );
+
         auto name = id;
 
         description_.entrypoints.push_back(EntrypointDescription{
             std::move(id),
             std::move(name),
             {},
-            PS_CONCURRENCY_ENTRYPOINT_SERIALIZED,
+            description_.concurrency,
             {},
             {},
             {},
             [method](IPlugin& plugin) {
-                (static_cast<TPlugin&>(plugin).*method)();
+                if constexpr (std::is_same_v<TResult, void>) {
+                    (static_cast<TPlugin&>(plugin).*method)();
+                    return static_cast<int32_t>(PS_OK);
+                } else {
+                    return static_cast<int32_t>((static_cast<TPlugin&>(plugin).*method)());
+                }
             },
         });
 
