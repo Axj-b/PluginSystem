@@ -6,3 +6,4 @@ pluginsystem_runtime/
 *.user
 *.suo
 *.log
+imgui.ini

@@ -3,6 +3,7 @@
 #include "detail/plugin_utils.hpp"
 
 #include <pluginsystem/error.hpp>
+#include <pluginsystem/graph.hpp>
 
 #include <algorithm>
 #include <set>
@@ -58,18 +59,14 @@ std::unique_ptr<PluginInstance> PluginRegistry::create_instance(std::string_view
         rebuild_cache();
     }
 
-    const auto found = std::find_if(cache_.begin(), cache_.end(), [plugin_id](const CacheEntry& entry) {
-        return entry.descriptor.id == plugin_id;
-    });
-    if (found == cache_.end()) {
-        throw PluginError{"Plugin is not discovered: " + std::string{plugin_id}};
-    }
+    const auto& entry = find_entry(plugin_id);
+    auto bindings = create_bindings(entry.descriptor, config);
+    return create_instance_with_bindings(plugin_id, std::move(config), std::move(bindings));
+}
 
-    auto bindings = create_bindings(found->descriptor, config);
-    auto backend = found->provider->create_instance(found->descriptor, config, bindings);
-    return std::unique_ptr<PluginInstance>{
-        new PluginInstance{found->descriptor, std::move(config), std::move(bindings), std::move(backend)}
-    };
+std::unique_ptr<GraphRuntime> PluginRegistry::create_graph(GraphConfig config)
+{
+    return std::make_unique<GraphRuntime>(*this, std::move(config));
 }
 
 PluginHost& PluginRegistry::host() noexcept
@@ -107,6 +104,38 @@ RuntimeBindings PluginRegistry::create_bindings(const PluginDescriptor& descript
     return bindings;
 }
 
+std::unique_ptr<PluginInstance> PluginRegistry::create_instance_with_bindings(
+    std::string_view plugin_id,
+    PluginInstanceConfig config,
+    RuntimeBindings bindings
+)
+{
+    if (cache_.empty()) {
+        rebuild_cache();
+    }
+
+    auto& entry = find_entry(plugin_id);
+    auto backend = entry.provider->create_instance(entry.descriptor, config, bindings);
+    return std::unique_ptr<PluginInstance>{
+        new PluginInstance{entry.descriptor, std::move(config), std::move(bindings), std::move(backend)}
+    };
+}
+
+PluginRegistry::CacheEntry& PluginRegistry::find_entry(std::string_view plugin_id)
+{
+    if (cache_.empty()) {
+        rebuild_cache();
+    }
+
+    const auto found = std::find_if(cache_.begin(), cache_.end(), [plugin_id](const CacheEntry& entry) {
+        return entry.descriptor.id == plugin_id;
+    });
+    if (found == cache_.end()) {
+        throw PluginError{"Plugin is not discovered: " + std::string{plugin_id}};
+    }
+    return *found;
+}
+
 void PluginRegistry::rebuild_cache()
 {
     cache_.clear();
@@ -128,4 +157,3 @@ void PluginRegistry::rebuild_cache()
 }
 
 }
-

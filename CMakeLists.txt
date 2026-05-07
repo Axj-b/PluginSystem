@@ -18,6 +18,7 @@ add_library(pluginsystem STATIC
     src/detail/plugin_utils.cpp
     src/detail/shared_library.cpp
     src/error.cpp
+    src/graph_runtime.cpp
     src/invocation_context.cpp
     src/plugin_instance.cpp
     src/plugin_providers.cpp
@@ -50,6 +51,89 @@ else()
 endif()
 
 if(PLUGINSYSTEM_BUILD_EXAMPLES)
+    include(FetchContent)
+    find_package(OpenGL REQUIRED)
+
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.4
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.12.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.92.7
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_Declare(
+        imnodes
+        GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
+        GIT_TAG v0.5
+        GIT_SHALLOW TRUE
+    )
+
+    FetchContent_MakeAvailable(glfw nlohmann_json imgui imnodes)
+
+    set(imnodes_internal_file "${imnodes_SOURCE_DIR}/imnodes_internal.h")
+    file(READ "${imnodes_internal_file}" imnodes_internal_contents)
+    string(REPLACE
+        "#include \"imnodes.h\"\n\n#include <imgui.h>\n#define IMGUI_DEFINE_MATH_OPERATORS\n#include <imgui_internal.h>"
+        "#include \"imnodes.h\"\n\n#ifndef IMGUI_DEFINE_MATH_OPERATORS\n#define IMGUI_DEFINE_MATH_OPERATORS\n#endif\n#include <imgui.h>\n#include <imgui_internal.h>\n#include <stddef.h>"
+        imnodes_internal_contents
+        "${imnodes_internal_contents}"
+    )
+    file(WRITE "${imnodes_internal_file}" "${imnodes_internal_contents}")
+
+    set(imnodes_cpp_file "${imnodes_SOURCE_DIR}/imnodes.cpp")
+    file(READ "${imnodes_cpp_file}" imnodes_cpp_contents)
+    string(REPLACE
+        "draw_cmd.TextureId = draw_list->_TextureIdStack.back();"
+        "draw_cmd.TexRef = draw_list->_TextureStack.back();"
+        imnodes_cpp_contents
+        "${imnodes_cpp_contents}"
+    )
+    string(REPLACE
+        "#include \"imnodes.h\"\n#include \"imnodes_internal.h\"\n\n#define IMGUI_DEFINE_MATH_OPERATORS\n#include <imgui_internal.h>"
+        "#ifndef IMGUI_DEFINE_MATH_OPERATORS\n#define IMGUI_DEFINE_MATH_OPERATORS\n#endif\n#include \"imnodes.h\"\n#include \"imnodes_internal.h\"\n#include <imgui_internal.h>"
+        imnodes_cpp_contents
+        "${imnodes_cpp_contents}"
+    )
+    string(REPLACE "IM_OFFSETOF(" "offsetof(" imnodes_cpp_contents "${imnodes_cpp_contents}")
+    file(WRITE "${imnodes_cpp_file}" "${imnodes_cpp_contents}")
+
+    add_library(pluginsystem_imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    target_include_directories(pluginsystem_imgui
+        PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+    )
+    target_link_libraries(pluginsystem_imgui PUBLIC glfw OpenGL::GL)
+
+    add_library(pluginsystem_imnodes STATIC
+        ${imnodes_SOURCE_DIR}/imnodes.cpp
+    )
+    target_include_directories(pluginsystem_imnodes PUBLIC ${imnodes_SOURCE_DIR})
+    target_link_libraries(pluginsystem_imnodes PUBLIC pluginsystem_imgui)
+
     add_library(greeter_plugin SHARED
         examples/greeter_plugin.cpp
         examples/MyUserPlugin.cpp
@@ -57,10 +141,48 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     target_link_libraries(greeter_plugin PRIVATE PluginSystem::pluginsystem)
     set_target_properties(greeter_plugin PROPERTIES PREFIX "")
 
+    add_library(pipeline_producer_plugin SHARED
+        examples/pipeline_producer_plugin.cpp
+        examples/PipelineProducerPlugin.cpp
+    )
+    target_link_libraries(pipeline_producer_plugin PRIVATE PluginSystem::pluginsystem)
+    set_target_properties(pipeline_producer_plugin PROPERTIES PREFIX "")
+
+    add_library(pipeline_processor_plugin SHARED
+        examples/pipeline_processor_plugin.cpp
+        examples/PipelineProcessorPlugin.cpp
+    )
+    target_link_libraries(pipeline_processor_plugin PRIVATE PluginSystem::pluginsystem)
+    set_target_properties(pipeline_processor_plugin PROPERTIES PREFIX "")
+
+    add_library(pipeline_presenter_plugin SHARED
+        examples/pipeline_presenter_plugin.cpp
+        examples/PipelinePresenterPlugin.cpp
+    )
+    target_link_libraries(pipeline_presenter_plugin PRIVATE PluginSystem::pluginsystem)
+    set_target_properties(pipeline_presenter_plugin PROPERTIES PREFIX "")
+
     add_executable(host_app
         examples/host_app.cpp
     )
     target_link_libraries(host_app PRIVATE PluginSystem::pluginsystem)
+
+    add_executable(graph_pipeline_app
+        examples/graph_pipeline_app.cpp
+    )
+    target_link_libraries(graph_pipeline_app PRIVATE PluginSystem::pluginsystem)
+
+    add_executable(node_editor_app
+        examples/node_editor/node_editor_app.cpp
+        examples/node_editor/editor_model.cpp
+    )
+    target_link_libraries(node_editor_app
+        PRIVATE
+            PluginSystem::pluginsystem
+            pluginsystem_imgui
+            pluginsystem_imnodes
+            nlohmann_json::nlohmann_json
+    )
 endif()
 
 if(PLUGINSYSTEM_BUILD_TESTS)
@@ -86,6 +208,26 @@ if(PLUGINSYSTEM_BUILD_TESTS)
     add_test(
         NAME plugin_manager_tests
         COMMAND plugin_manager_tests "$<TARGET_FILE:test_echo_plugin>" "$<TARGET_FILE:missing_symbol_plugin>"
+    )
+endif()
+
+if(PLUGINSYSTEM_BUILD_EXAMPLES AND PLUGINSYSTEM_BUILD_TESTS)
+    add_test(
+        NAME graph_pipeline_app
+        COMMAND graph_pipeline_app
+            "$<TARGET_FILE:pipeline_producer_plugin>"
+            "$<TARGET_FILE:pipeline_processor_plugin>"
+            "$<TARGET_FILE:pipeline_presenter_plugin>"
+            5
+    )
+    add_test(
+        NAME node_editor_headless_pipeline
+        COMMAND node_editor_app
+            --headless-run
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/pipeline_graph.json"
+            "$<TARGET_FILE:pipeline_producer_plugin>"
+            "$<TARGET_FILE:pipeline_processor_plugin>"
+            "$<TARGET_FILE:pipeline_presenter_plugin>"
     )
 endif()
 

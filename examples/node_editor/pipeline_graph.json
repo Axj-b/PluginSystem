@@ -1,0 +1,125 @@
+{
+  "blueprint_name": "NodeEditorPipelineDemo",
+  "edges": [
+    {
+      "source_node_id": "producer",
+      "source_port_id": "Frame",
+      "target_node_id": "processor",
+      "target_port_id": "FrameIn",
+      "ui_id": 1
+    },
+    {
+      "source_node_id": "processor",
+      "source_port_id": "FrameOut",
+      "target_node_id": "presenter",
+      "target_port_id": "FrameIn",
+      "ui_id": 2
+    },
+    {
+      "source_node_id": "producer",
+      "source_port_id": "Frame",
+      "target_node_id": "example_pipeline_processor_1",
+      "target_port_id": "FrameIn",
+      "ui_id": 3
+    },
+    {
+      "source_node_id": "example_pipeline_processor_1",
+      "source_port_id": "FrameOut",
+      "target_node_id": "example_pipeline_presenter_1",
+      "target_port_id": "FrameIn",
+      "ui_id": 4
+    }
+  ],
+  "nodes": [
+    {
+      "id": "producer",
+      "instance_name": "Producer",
+      "plugin_id": "example.pipeline.producer",
+      "position": [
+        40.0,
+        80.0
+      ],
+      "process_entrypoint": "Process",
+      "properties": {
+        "StartValue": 10.0,
+        "Step": 1.5
+      },
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "ui_id": 1
+    },
+    {
+      "id": "processor",
+      "instance_name": "Processor",
+      "plugin_id": "example.pipeline.processor",
+      "position": [
+        360.0,
+        80.0
+      ],
+      "process_entrypoint": "Process",
+      "properties": {
+        "Gain": 2.0,
+        "Offset": 3.0
+      },
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "ui_id": 2
+    },
+    {
+      "id": "presenter",
+      "instance_name": "Presenter",
+      "plugin_id": "example.pipeline.presenter",
+      "position": [
+        596.0,
+        94.0
+      ],
+      "process_entrypoint": "Process",
+      "properties": {
+        "WarningThreshold": 30.0
+      },
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "ui_id": 3
+    },
+    {
+      "id": "example_pipeline_processor_1",
+      "instance_name": "example_pipeline_processor_1",
+      "plugin_id": "example.pipeline.processor",
+      "position": [
+        348.0,
+        231.0
+      ],
+      "process_entrypoint": "Process",
+      "properties": {
+        "Gain": 0.0,
+        "Offset": 0.0
+      },
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "ui_id": 4
+    },
+    {
+      "id": "example_pipeline_presenter_1",
+      "instance_name": "example_pipeline_presenter_1",
+      "plugin_id": "example.pipeline.presenter",
+      "position": [
+        588.0,
+        243.0
+      ],
+      "process_entrypoint": "Process",
+      "properties": {
+        "WarningThreshold": 22.0
+      },
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Start",
+      "ui_id": 5
+    }
+  ],
+  "plugin_libraries": [
+    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_producer_plugin.dll",
+    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_processor_plugin.dll",
+    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_presenter_plugin.dll"
+  ],
+  "runtime_directory": "pluginsystem_runtime",
+  "version": 1
+}
