@@ -1,6 +1,7 @@
 #include "PipelineProcessorPlugin.h"
 
 #include <cstdio>
+#include <iostream>
 
 void PipelineProcessorPlugin::Register(pluginsystem::sdk::PluginRegistration<PipelineProcessorPlugin>& api)
 {
@@ -45,14 +46,17 @@ int PipelineProcessorPlugin::Stop()
 void PipelineProcessorPlugin::Process()
 {
     auto frame = frame_input_.read();
+
     if (started_) {
         const auto gain = gain_.read();
         const auto offset = offset_.read();
         frame.processed_value = frame.raw_value * gain + offset;
         std::snprintf(frame.status, sizeof(frame.status), "processed");
+        std::cout<< "Processed frame " << frame.sequence << ": raw=" << frame.raw_value << " processed=" << frame.processed_value << '\n' << std::flush;
     } else {
         std::snprintf(frame.status, sizeof(frame.status), "processor stopped");
     }
 
     frame_output_.write(frame);
 }
+

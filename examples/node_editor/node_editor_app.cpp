@@ -259,6 +259,7 @@ public:
 
     void draw()
     {
+        tick_continuous_run();
         draw_top_bar();
         draw_palette();
         draw_canvas();
@@ -269,7 +270,11 @@ public:
 private:
     void reload_plugins()
     {
-        runtime_.reset();
+        running_continuously_ = false;
+        paused_ = false;
+        continuous_job_.reset();
+        continuous_run_count_ = 0;
+        stop_runtime_internal();
         registry_ = make_registry(graph_.plugin_libraries);
         descriptors_ = node_editor::make_descriptor_index(registry_->discover_plugins());
         dirty_ = true;
@@ -290,14 +295,30 @@ private:
         if (input_text_string("Blueprint", graph_.blueprint_name)) {
             dirty_ = true;
         }
+
+        const bool can_run = validation_messages_.empty();
+
         ImGui::SameLine();
-        if (ImGui::Button("Run Once")) {
-            run_once_from_gui();
-        }
+        if (running_continuously_) { ImGui::BeginDisabled(); }
+        if (ImGui::Button("Run Once") && can_run) { run_once_from_gui(); }
+        if (running_continuously_) { ImGui::EndDisabled(); }
+
         ImGui::SameLine();
-        if (ImGui::Button("Stop")) {
-            stop_runtime();
+        if (running_continuously_) {
+            const auto label = "Running (" + std::to_string(continuous_run_count_) + ")##cont";
+            ImGui::BeginDisabled();
+            ImGui::Button(label.c_str());
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Pause")) { pause_continuous_run(); }
+        } else if (paused_) {
+            if (ImGui::Button("Resume")) { resume_continuous_run(); }
+        } else {
+            if (ImGui::Button("Run") && can_run) { start_continuous_run(); }
         }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Stop")) { stop_runtime(); }
         ImGui::SameLine();
         if (ImGui::Button("Reload Plugins")) {
             try_call([this]() {
@@ -466,9 +487,7 @@ private:
             for (const auto& property : descriptor->properties) {
                 if (property.type_name == "float" && property.byte_size == sizeof(float) && property.writable) {
                     auto& value = node->float_properties[property.id];
-                    if (ImGui::InputFloat(property.id.c_str(), &value)) {
-                        dirty_ = true;
-                    }
+                    ImGui::InputFloat(property.id.c_str(), &value);
                 } else {
                     ImGui::TextDisabled(
                         "%s: %s (%llu bytes)",
@@ -674,12 +693,125 @@ private:
         });
     }
 
-    void stop_runtime()
+    void stop_runtime_internal()
     {
         if (runtime_) {
             runtime_->stop();
             runtime_.reset();
+        }
+    }
+
+    void stop_runtime()
+    {
+        const bool was_running = running_continuously_ || paused_;
+        const auto count = continuous_run_count_;
+        running_continuously_ = false;
+        paused_ = false;
+        continuous_job_.reset();
+        continuous_run_count_ = 0;
+        stop_runtime_internal();
+        if (was_running) {
+            messages_.push_back("Continuous run stopped after " + std::to_string(count) + " iteration(s).");
+            std::cout << "Continuous run stopped after " << count << " iteration(s).\n" << std::flush;
+        } else {
             messages_.push_back("Graph runtime stopped.");
+        }
+        trim_messages();
+    }
+
+    void pause_continuous_run()
+    {
+        running_continuously_ = false;
+        paused_ = true;
+        continuous_job_.reset();
+        messages_.push_back("Paused after " + std::to_string(continuous_run_count_) + " iteration(s).");
+        trim_messages();
+        std::cout << "Continuous run paused after " << continuous_run_count_ << " iteration(s).\n" << std::flush;
+    }
+
+    void resume_continuous_run()
+    {
+        paused_ = false;
+        running_continuously_ = true;
+        messages_.push_back("Continuous run resumed.");
+        trim_messages();
+        std::cout << "Continuous run resumed.\n" << std::flush;
+    }
+
+    void start_continuous_run()
+    {
+        try_call([this]() {
+            refresh_validation();
+            if (!validation_messages_.empty()) {
+                messages_.push_back("Graph validation failed: " + validation_messages_.front());
+                return;
+            }
+            if (!runtime_ || dirty_) {
+                stop_runtime_internal();
+                runtime_ = registry_->create_graph(node_editor::make_graph_config(graph_));
+                dirty_ = false;
+            }
+            running_continuously_ = true;
+            continuous_job_.reset();
+            continuous_run_count_ = 0;
+            messages_.push_back("Continuous run started.");
+            trim_messages();
+            std::cout << "Continuous run started.\n" << std::flush;
+        });
+    }
+
+    void tick_continuous_run()
+    {
+        if (!running_continuously_) {
+            return;
+        }
+
+        if (dirty_) {
+            continuous_job_.reset(); // old runtime is being destroyed; handle is no longer valid
+            try_call([this]() {
+                stop_runtime_internal();
+                runtime_ = registry_->create_graph(node_editor::make_graph_config(graph_));
+                dirty_ = false;
+            });
+            if (!runtime_) {
+                running_continuously_ = false;
+                return;
+            }
+        }
+
+        if (continuous_job_) {
+            const auto s = runtime_->status(*continuous_job_);
+            if (s == pluginsystem::GraphJobStatus::pending || s == pluginsystem::GraphJobStatus::running) {
+                return;
+            }
+            if (s == pluginsystem::GraphJobStatus::completed) {
+                const auto r = runtime_->result(*continuous_job_);
+                if (r && r->result != PS_OK) {
+                    messages_.push_back("Continuous run failed at node: " + r->failed_node_id);
+                    trim_messages();
+                    std::cout << "[FAIL] at node: " << r->failed_node_id << '\n' << std::flush;
+                    running_continuously_ = false;
+                    continuous_job_.reset();
+                    return;
+                }
+                ++continuous_run_count_;
+                std::cout << "[Run " << continuous_run_count_ << "] completed\n" << std::flush;
+            } else {
+                try_call([this]() { runtime_->wait(*continuous_job_); });
+                running_continuously_ = false;
+                continuous_job_.reset();
+                return;
+            }
+            continuous_job_.reset();
+            return;
+        }
+
+        try_call([this]() {
+            apply_float_properties(*runtime_, graph_, descriptors_);
+            continuous_job_ = runtime_->submit_run();
+        });
+        if (!continuous_job_) {
+            running_continuously_ = false;
         }
     }
 
@@ -719,6 +851,10 @@ private:
     std::vector<std::string> messages_;
     std::string selected_node_id_;
     bool dirty_{true};
+    bool running_continuously_{false};
+    bool paused_{false};
+    std::optional<pluginsystem::GraphJobHandle> continuous_job_{};
+    std::uint64_t continuous_run_count_{0};
 };
 
 int run_gui(CliOptions options)
