@@ -19,6 +19,7 @@ class PluginInstanceBackend {
 public:
     virtual ~PluginInstanceBackend() = default;
     virtual int32_t invoke(std::string_view entrypoint_id, InvocationContext& context) = 0;
+    virtual void render(void* user_context) { (void)user_context; }
     virtual std::filesystem::path loaded_path() const;
 };
 
@@ -52,6 +53,7 @@ public:
     const SharedPropertyBlock& properties() const;
 
     int32_t invoke(std::string_view entrypoint_id);
+    void render(void* user_context);
     JobHandle submit(std::string_view entrypoint_id);
     JobStatus job_status(JobHandle handle) const;
     int32_t wait(JobHandle handle);

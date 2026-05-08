@@ -13,7 +13,6 @@ public:
     int Init() override;
     int Start() override;
     int Stop() override;
-    void* GetRenderer() override;
     void Process();
     void Reset();
 

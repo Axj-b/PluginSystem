@@ -136,6 +136,14 @@ void NodeEditorApp::draw()
     draw_canvas();
     draw_inspector();
     draw_bottom_panel();
+    draw_plugin_windows();
+}
+
+void NodeEditorApp::draw_plugin_windows()
+{
+    if (runtime_) {
+        runtime_->render_nodes(ImGui::GetCurrentContext());
+    }
 }
 
 void NodeEditorApp::reload_plugins()

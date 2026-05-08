@@ -40,6 +40,7 @@ private:
     void draw_canvas();
     void draw_inspector();
     void draw_bottom_panel();
+    void draw_plugin_windows();
     void draw_entrypoint_combo(const char* label, const pluginsystem::PluginDescriptor& descriptor, std::string& value);
     void add_node(const pluginsystem::PluginDescriptor& descriptor);
     void handle_link_creation();

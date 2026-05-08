@@ -58,6 +58,12 @@ else()
     target_compile_options(pluginsystem PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(pluginsystem_plugin_sdk INTERFACE)
+target_include_directories(pluginsystem_plugin_sdk INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/examples>
+)
+target_link_libraries(pluginsystem_plugin_sdk INTERFACE PluginSystem::pluginsystem)
+
 if(PLUGINSYSTEM_BUILD_EXAMPLES)
     include(FetchContent)
     find_package(OpenGL REQUIRED)
@@ -146,45 +152,47 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
         examples/greeter_plugin.cpp
         examples/MyUserPlugin.cpp
     )
-    target_link_libraries(greeter_plugin PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(greeter_plugin PRIVATE pluginsystem_plugin_sdk)
     set_target_properties(greeter_plugin PROPERTIES PREFIX "")
 
     add_library(pipeline_producer_plugin SHARED
         examples/pipeline_producer_plugin.cpp
         examples/PipelineProducerPlugin.cpp
     )
-    target_link_libraries(pipeline_producer_plugin PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(pipeline_producer_plugin PRIVATE pluginsystem_plugin_sdk)
     set_target_properties(pipeline_producer_plugin PROPERTIES PREFIX "")
 
     add_library(pipeline_processor_plugin SHARED
         examples/pipeline_processor_plugin.cpp
         examples/PipelineProcessorPlugin.cpp
     )
-    target_link_libraries(pipeline_processor_plugin PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(pipeline_processor_plugin PRIVATE pluginsystem_plugin_sdk pluginsystem_imgui)
     set_target_properties(pipeline_processor_plugin PROPERTIES PREFIX "")
 
     add_library(pipeline_presenter_plugin SHARED
         examples/pipeline_presenter_plugin.cpp
         examples/PipelinePresenterPlugin.cpp
     )
-    target_link_libraries(pipeline_presenter_plugin PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(pipeline_presenter_plugin PRIVATE pluginsystem_plugin_sdk)
     set_target_properties(pipeline_presenter_plugin PROPERTIES PREFIX "")
 
     add_executable(host_app
         examples/host_app.cpp
     )
     target_link_libraries(host_app PRIVATE PluginSystem::pluginsystem)
+    target_include_directories(host_app PRIVATE examples)
 
     add_executable(graph_pipeline_app
         examples/graph_pipeline_app.cpp
     )
     target_link_libraries(graph_pipeline_app PRIVATE PluginSystem::pluginsystem)
+    target_include_directories(graph_pipeline_app PRIVATE examples)
 
     add_library(pluginsystem_node_editor STATIC
         examples/node_editor/editor_model.cpp
         examples/node_editor/node_editor_widget.cpp
     )
-    target_include_directories(pluginsystem_node_editor PUBLIC examples/node_editor)
+    target_include_directories(pluginsystem_node_editor PUBLIC examples/node_editor examples)
     target_link_libraries(pluginsystem_node_editor
         PUBLIC
             PluginSystem::pluginsystem

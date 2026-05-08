@@ -1,5 +1,7 @@
 #include "PipelineProcessorPlugin.h"
 
+#include <imgui.h>
+
 #include <cstdio>
 #include <iostream>
 
@@ -57,10 +59,10 @@ void PipelineProcessorPlugin::Process()
         const auto gain = gain_.read();
         const auto offset = offset_.read();
         const auto apply_offset = applyOffset_.read();
-        const auto precision_scale = precision_scale_.read();   // double
-        const auto blend_mode = blend_mode_.read();             // int32_t enum: 0=Add, 1=Multiply, 2=Invert
-        const auto exponent = exponent_.read();                 // int8_t
-        const auto max_iterations = max_iterations_.read();     // uint16_t
+        const auto precision_scale = precision_scale_.read();
+        const auto blend_mode = blend_mode_.read();
+        const auto exponent = exponent_.read();
+        const auto max_iterations = max_iterations_.read();
 
         double result = static_cast<double>(frame.raw_value) * gain * precision_scale;
         if (apply_offset) result += offset;
@@ -85,6 +87,17 @@ void PipelineProcessorPlugin::Process()
         std::snprintf(frame.status, sizeof(frame.status), "processor stopped");
     }
 
+    last_sequence_ = frame.sequence;
+    last_processed_value_ = frame.processed_value;
+
     frame_output_.write(frame);
 }
 
+void PipelineProcessorPlugin::Render(void* user_context)
+{
+    ImGui::SetCurrentContext(static_cast<ImGuiContext*>(user_context));
+    ImGui::Begin("Processor");
+    ImGui::Text("Sequence:  %llu", static_cast<unsigned long long>(last_sequence_));
+    ImGui::Text("Processed: %.4f", static_cast<double>(last_processed_value_));
+    ImGui::End();
+}

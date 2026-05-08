@@ -53,11 +53,6 @@ int MyUserPlugin::Stop()
     return PS_OK;
 }
 
-void* MyUserPlugin::GetRenderer()
-{
-    return nullptr;
-}
-
 void MyUserPlugin::Process()
 {
     if (!point_cloud_ || !object_list_) {

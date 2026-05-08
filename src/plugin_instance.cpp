@@ -116,6 +116,11 @@ const SharedPropertyBlock& PluginInstance::properties() const
     return *bindings_.properties;
 }
 
+void PluginInstance::render(void* user_context)
+{
+    backend_->render(user_context);
+}
+
 int32_t PluginInstance::invoke(std::string_view entrypoint_id)
 {
     const EntrypointDescriptor& entrypoint = find_entrypoint(entrypoint_id);

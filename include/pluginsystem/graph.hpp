@@ -87,6 +87,7 @@ public:
     SharedPropertyBlock& properties(std::string_view node_id);
     const SharedPropertyBlock& properties(std::string_view node_id) const;
     const PluginDescriptor& node_descriptor(std::string_view node_id) const;
+    void render_nodes(void* user_context);
 
 private:
     enum class State : int { idle, starting, running, stopping };

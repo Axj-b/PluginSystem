@@ -285,6 +285,13 @@ const PluginDescriptor& GraphRuntime::node_descriptor(std::string_view node_id) 
     return find_node(node_id).descriptor;
 }
 
+void GraphRuntime::render_nodes(void* user_context)
+{
+    for (auto& node : nodes_) {
+        node.instance->render(user_context);
+    }
+}
+
 void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config)
 {
     if (config.nodes.empty()) {

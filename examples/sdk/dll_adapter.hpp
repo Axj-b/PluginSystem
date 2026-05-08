@@ -52,11 +52,20 @@ public:
             return PS_ERROR;
         }
 
+        const std::uint32_t host_struct_size = out_instance->struct_size;
         out_instance->abi_version = PLUGINSYSTEM_ABI_VERSION;
         out_instance->struct_size = static_cast<std::uint32_t>(sizeof(ps_plugin_instance));
         out_instance->instance = adapter.release();
         out_instance->invoke = &invoke;
         out_instance->destroy = &destroy;
+
+        constexpr std::uint32_t kRenderFieldEnd =
+            static_cast<std::uint32_t>(offsetof(ps_plugin_instance, render) + sizeof(ps_plugin_instance::render));
+        if (host_struct_size >= kRenderFieldEnd) {
+            out_instance->render = static_cast<Instance*>(out_instance->instance)->plugin->HasRender()
+                ? &render_fn : nullptr;
+        }
+
         return PS_OK;
     }
 
@@ -197,6 +206,11 @@ private:
         } catch (...) {
             return PS_ERROR;
         }
+    }
+
+    static void render_fn(void* instance, void* user_context)
+    {
+        static_cast<Instance*>(instance)->plugin->Render(user_context);
     }
 
     static void destroy(void* instance)

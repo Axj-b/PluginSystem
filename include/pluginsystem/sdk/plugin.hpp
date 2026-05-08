@@ -56,10 +56,12 @@ public:
         return PS_OK;
     }
 
-    virtual void* GetRenderer()
+    virtual bool HasRender() const
     {
-        return nullptr;
+        return false;
     }
+
+    virtual void Render(void* /*user_context*/) {}
 };
 
 } // namespace pluginsystem::sdk

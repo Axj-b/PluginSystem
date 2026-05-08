@@ -4,6 +4,8 @@
 
 #include <pluginsystem/sdk.hpp>
 
+#include <cstdint>
+
 class PipelineProcessorPlugin final : public pluginsystem::sdk::PluginBase {
 public:
     static void Register(pluginsystem::sdk::PluginRegistration<PipelineProcessorPlugin>& api);
@@ -11,6 +13,9 @@ public:
     int Start() override;
     int Stop() override;
     void Process();
+
+    bool HasRender() const override { return true; }
+    void Render(void* user_context) override;
 
 private:
     pluginsystem::sdk::InputPort<PipelineExample::PipelineFrame> frame_input_{"FrameIn"};
@@ -24,4 +29,6 @@ private:
     pluginsystem::sdk::Property<std::uint16_t> max_iterations_{"MaxIterations", "Max Iterations"};
 
     bool started_{false};
+    std::uint64_t last_sequence_{0};
+    float last_processed_value_{0.0f};
 };

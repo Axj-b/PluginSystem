@@ -249,6 +249,8 @@ typedef struct ps_plugin_instance {
     void* instance;
     int32_t (*invoke)(void* instance, const char* entrypoint_id, const ps_invocation_context* context);
     void (*destroy)(void* instance);
+    /* render field: only valid when struct_size >= sizeof(ps_plugin_instance); NULL if plugin has no renderer */
+    void (*render)(void* instance, void* user_context);
 } ps_plugin_instance;
 
 typedef int32_t (*ps_discover_plugin_fn)(const ps_host_context* host, ps_plugin_discovery* out_discovery);
