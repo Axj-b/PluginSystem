@@ -91,41 +91,12 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
         GIT_TAG v1.92.7
         GIT_SHALLOW TRUE
     )
-    FetchContent_Declare(
-        imnodes
-        GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
-        GIT_TAG v0.5
-        GIT_SHALLOW TRUE
-    )
+    FetchContent_MakeAvailable(glfw nlohmann_json imgui)
 
-    FetchContent_MakeAvailable(glfw nlohmann_json imgui imnodes)
-
-    set(imnodes_internal_file "${imnodes_SOURCE_DIR}/imnodes_internal.h")
-    file(READ "${imnodes_internal_file}" imnodes_internal_contents)
-    string(REPLACE
-        "#include \"imnodes.h\"\n\n#include <imgui.h>\n#define IMGUI_DEFINE_MATH_OPERATORS\n#include <imgui_internal.h>"
-        "#include \"imnodes.h\"\n\n#ifndef IMGUI_DEFINE_MATH_OPERATORS\n#define IMGUI_DEFINE_MATH_OPERATORS\n#endif\n#include <imgui.h>\n#include <imgui_internal.h>\n#include <stddef.h>"
-        imnodes_internal_contents
-        "${imnodes_internal_contents}"
-    )
-    file(WRITE "${imnodes_internal_file}" "${imnodes_internal_contents}")
-
-    set(imnodes_cpp_file "${imnodes_SOURCE_DIR}/imnodes.cpp")
-    file(READ "${imnodes_cpp_file}" imnodes_cpp_contents)
-    string(REPLACE
-        "draw_cmd.TextureId = draw_list->_TextureIdStack.back();"
-        "draw_cmd.TexRef = draw_list->_TextureStack.back();"
-        imnodes_cpp_contents
-        "${imnodes_cpp_contents}"
-    )
-    string(REPLACE
-        "#include \"imnodes.h\"\n#include \"imnodes_internal.h\"\n\n#define IMGUI_DEFINE_MATH_OPERATORS\n#include <imgui_internal.h>"
-        "#ifndef IMGUI_DEFINE_MATH_OPERATORS\n#define IMGUI_DEFINE_MATH_OPERATORS\n#endif\n#include \"imnodes.h\"\n#include \"imnodes_internal.h\"\n#include <imgui_internal.h>"
-        imnodes_cpp_contents
-        "${imnodes_cpp_contents}"
-    )
-    string(REPLACE "IM_OFFSETOF(" "offsetof(" imnodes_cpp_contents "${imnodes_cpp_contents}")
-    file(WRITE "${imnodes_cpp_file}" "${imnodes_cpp_contents}")
+    set(PLUGINSYSTEM_IMNODES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/3rd-party/imnodes")
+    if(NOT EXISTS "${PLUGINSYSTEM_IMNODES_SOURCE_DIR}/imnodes.cpp")
+        message(FATAL_ERROR "Vendored imnodes source not found at ${PLUGINSYSTEM_IMNODES_SOURCE_DIR}")
+    endif()
 
     add_library(pluginsystem_imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
@@ -143,9 +114,9 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     target_link_libraries(pluginsystem_imgui PUBLIC glfw OpenGL::GL)
 
     add_library(pluginsystem_imnodes STATIC
-        ${imnodes_SOURCE_DIR}/imnodes.cpp
+        ${PLUGINSYSTEM_IMNODES_SOURCE_DIR}/imnodes.cpp
     )
-    target_include_directories(pluginsystem_imnodes PUBLIC ${imnodes_SOURCE_DIR})
+    target_include_directories(pluginsystem_imnodes PUBLIC ${PLUGINSYSTEM_IMNODES_SOURCE_DIR})
     target_link_libraries(pluginsystem_imnodes PUBLIC pluginsystem_imgui)
 
     add_library(greeter_plugin SHARED

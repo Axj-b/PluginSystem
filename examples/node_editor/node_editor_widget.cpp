@@ -4,6 +4,7 @@
 #include <imnodes.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -210,6 +211,8 @@ void NodeEditorApp::draw_top_bar()
     ImGui::SameLine();
     if (ImGui::Button("Stop")) { stop_runtime(); }
     ImGui::SameLine();
+    draw_zoom_controls();
+    ImGui::SameLine();
     if (ImGui::Button("Reload Plugins")) {
         try_call([this]() {
             reload_plugins();
@@ -240,6 +243,32 @@ void NodeEditorApp::draw_top_bar()
     }
 
     ImGui::End();
+}
+
+void NodeEditorApp::draw_zoom_controls()
+{
+    constexpr float min_zoom = 0.35F;
+    constexpr float max_zoom = 2.50F;
+
+    float zoom = ImNodes::EditorContextGetZoom();
+    if (ImGui::Button("-##zoom_out")) {
+        ImNodes::EditorContextSetZoom(std::clamp(zoom / 1.15F, min_zoom, max_zoom));
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(96.0F);
+    float zoom_percent = zoom * 100.0F;
+    if (ImGui::SliderFloat("Zoom", &zoom_percent, min_zoom * 100.0F, max_zoom * 100.0F, "%.0f%%")) {
+        ImNodes::EditorContextSetZoom(std::clamp(zoom_percent / 100.0F, min_zoom, max_zoom));
+    }
+    ImGui::SameLine();
+    zoom = ImNodes::EditorContextGetZoom();
+    if (ImGui::Button("+##zoom_in")) {
+        ImNodes::EditorContextSetZoom(std::clamp(zoom * 1.15F, min_zoom, max_zoom));
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("100%##zoom_reset")) {
+        ImNodes::EditorContextSetZoom(1.0F);
+    }
 }
 
 void NodeEditorApp::draw_palette()

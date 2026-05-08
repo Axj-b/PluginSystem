@@ -36,6 +36,7 @@ private:
     void reload_plugins();
     void refresh_validation();
     void draw_top_bar();
+    void draw_zoom_controls();
     void draw_palette();
     void draw_canvas();
     void draw_inspector();
