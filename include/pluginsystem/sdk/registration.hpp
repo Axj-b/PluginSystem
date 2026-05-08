@@ -23,7 +23,7 @@ struct EntrypointDescription {
     std::vector<std::string> input_port_ids;
     std::vector<std::string> output_port_ids;
     std::vector<std::string> trigger_port_ids;
-    std::function<int32_t(PluginBase&)> invoke;
+    std::function<int32_t(void*)> invoke;
 };
 
 struct PluginDescription {
@@ -156,12 +156,13 @@ public:
             {},
             {},
             {},
-            [method](PluginBase& plugin) {
+            [method](void* plugin) {
+                auto& typed_plugin = *static_cast<TPlugin*>(plugin);
                 if constexpr (std::is_same_v<TResult, void>) {
-                    (static_cast<TPlugin&>(plugin).*method)();
+                    (typed_plugin.*method)();
                     return static_cast<int32_t>(PS_OK);
                 } else {
-                    return static_cast<int32_t>((static_cast<TPlugin&>(plugin).*method)());
+                    return static_cast<int32_t>((typed_plugin.*method)());
                 }
             },
         });

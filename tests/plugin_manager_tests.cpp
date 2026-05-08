@@ -237,13 +237,14 @@ void expect_graph_error(const std::function<void()>& action)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "Usage: plugin_manager_tests <test-plugin-library-path> <missing-symbol-plugin-path>\n";
+    if (argc != 4) {
+        std::cerr << "Usage: plugin_manager_tests <test-plugin-library-path> <missing-symbol-plugin-path> <sdk-no-base-plugin-path>\n";
         return 2;
     }
 
     pluginsystem::PluginRegistry registry;
     registry.add_dll_plugin(argv[1]);
+    registry.add_dll_plugin(argv[3]);
     registry.register_builtin(make_increment_builtin());
     registry.register_builtin(make_serialized_builtin());
     auto graph_starts = std::make_shared<std::atomic<int>>(0);
@@ -257,6 +258,7 @@ int main(int argc, char** argv)
 
     const auto descriptors = registry.discover_plugins();
     assert(contains_plugin(descriptors, "test.pipeline"));
+    assert(contains_plugin(descriptors, "test.sdk.no_base"));
     assert(contains_plugin(descriptors, "test.builtin.increment"));
     assert(contains_plugin(descriptors, "test.builtin.serialized"));
     assert(contains_plugin(descriptors, "test.graph.add_one"));
@@ -375,6 +377,17 @@ int main(int argc, char** argv)
         missing_symbol_failed = true;
     }
     assert(missing_symbol_failed);
+
+    pluginsystem::PluginInstanceConfig sdk_no_base_config;
+    sdk_no_base_config.blueprint_name = "TestBlueprint";
+    sdk_no_base_config.instance_name = "SdkNoBase";
+    auto sdk_no_base = registry.create_instance("test.sdk.no_base", sdk_no_base_config);
+    Sample sdk_no_base_input{9};
+    sdk_no_base->port("input").write(&sdk_no_base_input, sizeof(sdk_no_base_input));
+    assert(sdk_no_base->invoke("Increment") == PS_OK);
+    Sample sdk_no_base_output{};
+    sdk_no_base->port("output").read(&sdk_no_base_output, sizeof(sdk_no_base_output));
+    assert(sdk_no_base_output.value == 10);
 
     pluginsystem::GraphConfig graph_config;
     graph_config.blueprint_name = "GraphBlueprintPipeline";

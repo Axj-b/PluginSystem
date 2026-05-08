@@ -1,12 +1,12 @@
 #pragma once
 
 #include "PipelineSamples.h"
-
-#include <pluginsystem/sdk.hpp>
+#include <IPlugin.h>
+#include <sdk.hpp>
 
 #include <cstdint>
 
-class PipelinePresenterPlugin final : public pluginsystem::sdk::PluginBase {
+class PipelinePresenterPlugin final : public pluginsystem::examples::IPlugin {
 public:
     static void Register(pluginsystem::sdk::PluginRegistration<PipelinePresenterPlugin>& api);
 

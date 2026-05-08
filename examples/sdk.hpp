@@ -1,7 +1,6 @@
 #pragma once
 
-// Convenience header: core SDK types + DLL adapter.
-// Plugin authors: #include <pluginsystem/sdk.hpp> for types only,
-// or #include <sdk.hpp> (from examples/) for types + DLL export macro.
+// Example project SDK umbrella: generic PluginSystem SDK types plus the
+// example project's optional IPlugin lifecycle and DLL adapter.
 #include <pluginsystem/sdk.hpp>
 #include <sdk/dll_adapter.hpp>

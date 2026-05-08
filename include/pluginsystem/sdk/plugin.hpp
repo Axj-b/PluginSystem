@@ -6,8 +6,6 @@
 
 namespace pluginsystem::sdk {
 
-class PluginBase;
-
 class InvocationScope {
 public:
     explicit InvocationScope(const ps_invocation_context* context)
@@ -35,33 +33,6 @@ public:
 private:
     const ps_invocation_context* previous_{nullptr};
     inline static thread_local const ps_invocation_context* current_{nullptr};
-};
-
-class PluginBase {
-public:
-    virtual ~PluginBase() = default;
-
-    virtual int Init()
-    {
-        return PS_OK;
-    }
-
-    virtual int Start()
-    {
-        return PS_OK;
-    }
-
-    virtual int Stop()
-    {
-        return PS_OK;
-    }
-
-    virtual bool HasRender() const
-    {
-        return false;
-    }
-
-    virtual void Render(void* /*user_context*/) {}
 };
 
 } // namespace pluginsystem::sdk

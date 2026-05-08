@@ -9,11 +9,96 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-namespace pluginsystem::sdk {
+namespace pluginsystem::examples::sdk {
+namespace detail {
+
+template <typename...>
+using void_t = void;
+
+template <typename TPlugin, typename = void>
+struct has_init : std::false_type {};
+
+template <typename TPlugin>
+struct has_init<TPlugin, void_t<decltype(std::declval<TPlugin&>().Init())>> : std::true_type {};
+
+template <typename TPlugin, typename = void>
+struct has_stop : std::false_type {};
+
+template <typename TPlugin>
+struct has_stop<TPlugin, void_t<decltype(std::declval<TPlugin&>().Stop())>> : std::true_type {};
+
+template <typename TPlugin, typename = void>
+struct has_render : std::false_type {};
+
+template <typename TPlugin>
+struct has_render<TPlugin, void_t<decltype(std::declval<TPlugin&>().Render(std::declval<void*>()))>> : std::true_type {};
+
+template <typename TPlugin, typename = void>
+struct has_has_render : std::false_type {};
+
+template <typename TPlugin>
+struct has_has_render<TPlugin, void_t<decltype(std::declval<const TPlugin&>().HasRender())>> : std::true_type {};
+
+template <typename TResult>
+int32_t result_to_status(TResult result)
+{
+    return static_cast<int32_t>(result);
+}
+
+inline int32_t result_to_status()
+{
+    return PS_OK;
+}
+
+template <typename TPlugin>
+int32_t call_init(TPlugin& plugin)
+{
+    if constexpr (has_init<TPlugin>::value) {
+        if constexpr (std::is_void_v<decltype(plugin.Init())>) {
+            plugin.Init();
+            return PS_OK;
+        } else {
+            return result_to_status(plugin.Init());
+        }
+    } else {
+        return PS_OK;
+    }
+}
+
+template <typename TPlugin>
+void call_stop(TPlugin& plugin)
+{
+    if constexpr (has_stop<TPlugin>::value) {
+        (void)plugin.Stop();
+    }
+}
+
+template <typename TPlugin>
+bool supports_render(const TPlugin& plugin)
+{
+    if constexpr (!has_render<TPlugin>::value) {
+        return false;
+    } else if constexpr (has_has_render<TPlugin>::value) {
+        return static_cast<bool>(plugin.HasRender());
+    } else {
+        return true;
+    }
+}
+
+template <typename TPlugin>
+void call_render(TPlugin& plugin, void* user_context)
+{
+    if constexpr (has_render<TPlugin>::value) {
+        plugin.Render(user_context);
+    }
+}
+
+} // namespace detail
 
 template <typename TPlugin>
 class DllAdapter {
@@ -48,7 +133,7 @@ public:
         auto adapter = std::make_unique<Instance>();
         adapter->plugin = std::make_unique<TPlugin>();
 
-        if (adapter->plugin->Init() != PS_OK) {
+        if (detail::call_init(*adapter->plugin) != PS_OK) {
             return PS_ERROR;
         }
 
@@ -62,7 +147,7 @@ public:
         constexpr std::uint32_t kRenderFieldEnd =
             static_cast<std::uint32_t>(offsetof(ps_plugin_instance, render) + sizeof(ps_plugin_instance::render));
         if (host_struct_size >= kRenderFieldEnd) {
-            out_instance->render = static_cast<Instance*>(out_instance->instance)->plugin->HasRender()
+            out_instance->render = detail::supports_render(*static_cast<Instance*>(out_instance->instance)->plugin)
                 ? &render_fn : nullptr;
         }
 
@@ -71,7 +156,7 @@ public:
 
 private:
     struct DescriptorStore {
-        PluginDescription description;
+        pluginsystem::sdk::PluginDescription description;
         std::vector<ps_port_descriptor> ports;
         std::vector<ps_property_descriptor> properties;
         std::vector<ps_entrypoint_descriptor> entrypoints;
@@ -83,7 +168,7 @@ private:
 
         DescriptorStore()
         {
-            PluginRegistration<TPlugin> registration;
+            pluginsystem::sdk::PluginRegistration<TPlugin> registration;
             TPlugin::Register(registration);
             description = registration.description();
 
@@ -93,8 +178,8 @@ private:
                     static_cast<std::uint32_t>(sizeof(ps_port_descriptor)),
                     port.id.c_str(),
                     port.name.c_str(),
-                    to_c_direction(port.direction),
-                    to_c_access_mode(port.access_mode),
+                    pluginsystem::sdk::to_c_direction(port.direction),
+                    pluginsystem::sdk::to_c_access_mode(port.access_mode),
                     port.byte_size,
                     port.alignment,
                     port.type_name.c_str(),
@@ -201,8 +286,8 @@ private:
         }
 
         try {
-            InvocationScope invocation_scope{context};
-            return store.description.entrypoints[found->second].invoke(*adapter->plugin);
+            pluginsystem::sdk::InvocationScope invocation_scope{context};
+            return store.description.entrypoints[found->second].invoke(adapter->plugin.get());
         } catch (...) {
             return PS_ERROR;
         }
@@ -210,20 +295,20 @@ private:
 
     static void render_fn(void* instance, void* user_context)
     {
-        static_cast<Instance*>(instance)->plugin->Render(user_context);
+        detail::call_render(*static_cast<Instance*>(instance)->plugin, user_context);
     }
 
     static void destroy(void* instance)
     {
         auto* adapter = static_cast<Instance*>(instance);
         if (adapter != nullptr && adapter->plugin != nullptr) {
-            (void)adapter->plugin->Stop();
+            detail::call_stop(*adapter->plugin);
         }
         delete adapter;
     }
 };
 
-} // namespace pluginsystem::sdk
+} // namespace pluginsystem::examples::sdk
 
 #define PLUGINSYSTEM_EXPORT_PLUGIN(plugin_type) \
     extern "C" PLUGINSYSTEM_EXPORT int32_t pluginsystem_discover_plugin( \
@@ -231,7 +316,7 @@ private:
         ps_plugin_discovery* out_discovery \
     ) \
     { \
-        return ::pluginsystem::sdk::DllAdapter<plugin_type>::discover(host, out_discovery); \
+        return ::pluginsystem::examples::sdk::DllAdapter<plugin_type>::discover(host, out_discovery); \
     } \
     extern "C" PLUGINSYSTEM_EXPORT int32_t pluginsystem_create_plugin_instance( \
         const ps_host_context* host, \
@@ -239,5 +324,5 @@ private:
         ps_plugin_instance* out_instance \
     ) \
     { \
-        return ::pluginsystem::sdk::DllAdapter<plugin_type>::create_instance(host, config, out_instance); \
+        return ::pluginsystem::examples::sdk::DllAdapter<plugin_type>::create_instance(host, config, out_instance); \
     }

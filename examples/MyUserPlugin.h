@@ -1,12 +1,12 @@
 #pragma once
 
 #include "Samples.h"
-
-#include <pluginsystem/sdk.hpp>
+#include <IPlugin.h>
+#include <sdk.hpp>
 
 #include <memory>
 
-class MyUserPlugin final : public pluginsystem::sdk::PluginBase {
+class MyUserPlugin final : public pluginsystem::examples::IPlugin {
 public:
     static void Register(pluginsystem::sdk::PluginRegistration<MyUserPlugin>& api);
 

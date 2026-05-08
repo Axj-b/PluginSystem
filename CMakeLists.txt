@@ -222,6 +222,12 @@ if(PLUGINSYSTEM_BUILD_TESTS)
     target_link_libraries(missing_symbol_plugin PRIVATE PluginSystem::pluginsystem)
     set_target_properties(missing_symbol_plugin PROPERTIES PREFIX "")
 
+    add_library(sdk_no_base_plugin SHARED
+        tests/sdk_no_base_plugin.cpp
+    )
+    target_link_libraries(sdk_no_base_plugin PRIVATE pluginsystem_plugin_sdk)
+    set_target_properties(sdk_no_base_plugin PROPERTIES PREFIX "")
+
     add_executable(plugin_manager_tests
         tests/plugin_manager_tests.cpp
     )
@@ -229,7 +235,10 @@ if(PLUGINSYSTEM_BUILD_TESTS)
 
     add_test(
         NAME plugin_manager_tests
-        COMMAND plugin_manager_tests "$<TARGET_FILE:test_echo_plugin>" "$<TARGET_FILE:missing_symbol_plugin>"
+        COMMAND plugin_manager_tests
+            "$<TARGET_FILE:test_echo_plugin>"
+            "$<TARGET_FILE:missing_symbol_plugin>"
+            "$<TARGET_FILE:sdk_no_base_plugin>"
     )
 endif()
 

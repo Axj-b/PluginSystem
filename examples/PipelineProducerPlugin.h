@@ -2,11 +2,11 @@
 
 #include "PipelineSamples.h"
 
-#include <pluginsystem/sdk.hpp>
-
+#include <sdk.hpp>
+#include <IPlugin.h>
 #include <cstdint>
 
-class PipelineProducerPlugin final : public pluginsystem::sdk::PluginBase {
+class PipelineProducerPlugin final : public pluginsystem::examples::IPlugin {
 public:
     static void Register(pluginsystem::sdk::PluginRegistration<PipelineProducerPlugin>& api);
 
