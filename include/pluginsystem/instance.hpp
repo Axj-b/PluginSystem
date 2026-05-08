@@ -52,7 +52,7 @@ public:
     const SharedPropertyBlock& properties() const;
 
     int32_t invoke(std::string_view entrypoint_id);
-    JobHandle submit(std::string entrypoint_id);
+    JobHandle submit(std::string_view entrypoint_id);
     JobStatus job_status(JobHandle handle) const;
     int32_t wait(JobHandle handle);
     std::optional<int32_t> result(JobHandle handle) const;
@@ -71,8 +71,7 @@ private:
     );
 
     const EntrypointDescriptor& find_entrypoint(std::string_view entrypoint_id) const;
-    ConcurrencyPolicy policy_for(std::string_view entrypoint_id) const;
-    int32_t invoke_locked(std::string_view entrypoint_id);
+    int32_t invoke_locked(const EntrypointDescriptor& entrypoint);
     std::shared_ptr<AsyncJob> find_job(JobHandle handle) const;
     void join_jobs() noexcept;
 

@@ -39,53 +39,64 @@ GraphRuntime::~GraphRuntime()
 
 void GraphRuntime::start()
 {
-    {
-        std::lock_guard<std::mutex> lock{worker_mutex_};
-        if (workers_started_) {
-            return;
+    State expected = State::idle;
+    if (!state_.compare_exchange_strong(expected, State::starting)) {
+        // If another thread is concurrently starting, wait for it to finish.
+        while (state_.load(std::memory_order_acquire) == State::starting) {
+            std::this_thread::yield();
         }
-        stopping_ = false;
+        return;
     }
 
-    for (const auto node_index : topological_order_) {
-        auto& node = nodes_[node_index];
-        if (!node.config.start_entrypoint.empty() && has_entrypoint(node.descriptor, node.config.start_entrypoint)) {
-            const auto result = node.instance->invoke(node.config.start_entrypoint);
-            if (result != PS_OK) {
-                throw PluginError{"Graph node start failed: " + node.config.node_id};
+    try {
+        for (const auto node_index : topological_order_) {
+            auto& node = nodes_[node_index];
+            if (!node.config.start_entrypoint.empty() && has_entrypoint(node.descriptor, node.config.start_entrypoint)) {
+                const auto result = node.instance->invoke(node.config.start_entrypoint);
+                if (result != PS_OK) {
+                    throw PluginError{"Graph node start failed: " + node.config.node_id};
+                }
             }
         }
-    }
 
-    {
-        std::lock_guard<std::mutex> lock{worker_mutex_};
-        workers_started_ = true;
-        workers_.reserve(worker_count_);
-        for (std::uint32_t index = 0; index < worker_count_; ++index) {
-            workers_.emplace_back([this]() {
-                worker_loop();
-            });
+        {
+            std::lock_guard<std::mutex> lock{worker_mutex_};
+            workers_.reserve(worker_count_);
+            for (std::uint32_t index = 0; index < worker_count_; ++index) {
+                workers_.emplace_back([this]() { worker_loop(); });
+            }
         }
+
+        state_.store(State::running, std::memory_order_release);
+    } catch (...) {
+        state_.store(State::idle, std::memory_order_release);
+        throw;
     }
 }
 
 void GraphRuntime::stop()
 {
-    {
-        std::lock_guard<std::mutex> lock{worker_mutex_};
-        if (!workers_started_) {
-            return;
-        }
-        stopping_ = true;
+    State expected = State::running;
+    if (!state_.compare_exchange_strong(expected, State::stopping)) {
+        return;
     }
+
     worker_cv_.notify_all();
 
-    for (auto& worker : workers_) {
+    std::vector<std::thread> workers_to_join;
+    {
+        std::lock_guard<std::mutex> lock{worker_mutex_};
+        workers_to_join = std::move(workers_);
+    }
+    for (auto& worker : workers_to_join) {
         if (worker.joinable() && worker.get_id() != std::this_thread::get_id()) {
             worker.join();
         }
     }
-    workers_.clear();
+
+    // Reset state before calling Stop entrypoints so it is always consistent,
+    // even if an entrypoint throws.
+    state_.store(State::idle, std::memory_order_release);
 
     for (auto iterator = topological_order_.rbegin(); iterator != topological_order_.rend(); ++iterator) {
         auto& node = nodes_[*iterator];
@@ -96,15 +107,15 @@ void GraphRuntime::stop()
             }
         }
     }
-
-    std::lock_guard<std::mutex> lock{worker_mutex_};
-    workers_started_ = false;
-    stopping_ = false;
 }
 
 GraphJobHandle GraphRuntime::submit_run()
 {
     start();
+
+    if (state_.load(std::memory_order_acquire) != State::running) {
+        throw PluginError{"Cannot submit run: graph failed to start or is stopping"};
+    }
 
     GraphJobHandle handle = 0;
     auto job = std::make_shared<Job>();
@@ -153,6 +164,19 @@ std::optional<GraphRunResult> GraphRuntime::result(GraphJobHandle handle) const
         return std::nullopt;
     }
     return job->result;
+}
+
+bool GraphRuntime::cancel(GraphJobHandle handle)
+{
+    auto job = find_job(handle);
+    std::lock_guard<std::mutex> lock{job->mutex};
+    if (job->status != GraphJobStatus::pending) {
+        return false;
+    }
+    job->cancel_requested = true;
+    job->status = GraphJobStatus::canceled;
+    job->cv.notify_all();
+    return true;
 }
 
 SharedMemoryChannel& GraphRuntime::port(std::string_view node_id, std::string_view port_id)
@@ -418,9 +442,9 @@ void GraphRuntime::worker_loop()
         {
             std::unique_lock<std::mutex> lock{worker_mutex_};
             worker_cv_.wait(lock, [this]() {
-                return stopping_ || !queue_.empty();
+                return state_.load(std::memory_order_relaxed) == State::stopping || !queue_.empty();
             });
-            if (stopping_ && queue_.empty()) {
+            if (state_.load(std::memory_order_relaxed) == State::stopping && queue_.empty()) {
                 return;
             }
             handle = queue_.front();
@@ -430,6 +454,10 @@ void GraphRuntime::worker_loop()
         auto job = find_job(handle);
         {
             std::lock_guard<std::mutex> lock{job->mutex};
+            if (job->status == GraphJobStatus::canceled) {
+                job->cv.notify_all();
+                continue;
+            }
             job->status = GraphJobStatus::running;
         }
         job->cv.notify_all();

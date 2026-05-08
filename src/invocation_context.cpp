@@ -84,7 +84,7 @@ int32_t InvocationContext::read_port_thunk(void* user_data, const char* port_id,
     try {
         static_cast<InvocationContext*>(user_data)->read_port(detail::safe_string(port_id), out_data, byte_size);
         return PS_OK;
-    } catch (const PluginError&) {
+    } catch (...) {
         return PS_ERROR;
     }
 }
@@ -94,7 +94,7 @@ int32_t InvocationContext::write_port_thunk(void* user_data, const char* port_id
     try {
         static_cast<InvocationContext*>(user_data)->write_port(detail::safe_string(port_id), data, byte_size);
         return PS_OK;
-    } catch (const PluginError&) {
+    } catch (...) {
         return PS_ERROR;
     }
 }
@@ -108,7 +108,7 @@ void* InvocationContext::get_port_payload_thunk(void* user_data, const char* por
             *out_byte_size = byte_size;
         }
         return payload;
-    } catch (const PluginError&) {
+    } catch (...) {
         if (out_byte_size != nullptr) {
             *out_byte_size = 0;
         }
@@ -121,7 +121,7 @@ int32_t InvocationContext::read_property_thunk(void* user_data, const char* prop
     try {
         static_cast<InvocationContext*>(user_data)->read_property(detail::safe_string(property_id), out_data, byte_size);
         return PS_OK;
-    } catch (const PluginError&) {
+    } catch (...) {
         return PS_ERROR;
     }
 }
@@ -131,7 +131,7 @@ int32_t InvocationContext::write_property_thunk(void* user_data, const char* pro
     try {
         static_cast<InvocationContext*>(user_data)->write_property(detail::safe_string(property_id), data, byte_size);
         return PS_OK;
-    } catch (const PluginError&) {
+    } catch (...) {
         return PS_ERROR;
     }
 }
@@ -145,7 +145,7 @@ void* InvocationContext::get_raw_property_block_thunk(void* user_data, std::uint
             *out_byte_size = byte_size;
         }
         return payload;
-    } catch (const PluginError&) {
+    } catch (...) {
         if (out_byte_size != nullptr) {
             *out_byte_size = 0;
         }

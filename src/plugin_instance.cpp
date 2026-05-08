@@ -118,33 +118,35 @@ const SharedPropertyBlock& PluginInstance::properties() const
 
 int32_t PluginInstance::invoke(std::string_view entrypoint_id)
 {
-    switch (policy_for(entrypoint_id)) {
+    const EntrypointDescriptor& entrypoint = find_entrypoint(entrypoint_id);
+    switch (entrypoint.concurrency) {
     case ConcurrencyPolicy::instance_serialized: {
         std::lock_guard<std::mutex> lock{instance_mutex_};
-        return invoke_locked(entrypoint_id);
+        return invoke_locked(entrypoint);
     }
     case ConcurrencyPolicy::entrypoint_serialized: {
         std::mutex* mutex = nullptr;
         {
             std::lock_guard<std::mutex> lock{entrypoint_mutexes_mutex_};
-            auto& entry = entrypoint_mutexes_[std::string{entrypoint_id}];
+            auto& entry = entrypoint_mutexes_[entrypoint.id];
             if (!entry) {
                 entry = std::make_unique<std::mutex>();
             }
             mutex = entry.get();
         }
         std::lock_guard<std::mutex> lock{*mutex};
-        return invoke_locked(entrypoint_id);
+        return invoke_locked(entrypoint);
     }
     case ConcurrencyPolicy::fully_concurrent:
-        return invoke_locked(entrypoint_id);
+        return invoke_locked(entrypoint);
     }
-
-    return invoke_locked(entrypoint_id);
+    return invoke_locked(entrypoint);
 }
 
-JobHandle PluginInstance::submit(std::string entrypoint_id)
+JobHandle PluginInstance::submit(std::string_view entrypoint_id)
 {
+    find_entrypoint(entrypoint_id); // validate early, before spawning a thread
+
     const JobHandle handle = next_job_handle_++;
     auto job = std::make_shared<AsyncJob>();
 
@@ -153,7 +155,7 @@ JobHandle PluginInstance::submit(std::string entrypoint_id)
         jobs_.emplace(handle, job);
     }
 
-    job->worker = std::thread([this, entrypoint_id = std::move(entrypoint_id), job]() {
+    job->worker = std::thread([this, entrypoint_id = std::string{entrypoint_id}, job]() {
         {
             std::lock_guard<std::mutex> lock{job->mutex};
             if (job->cancel_requested) {
@@ -247,19 +249,10 @@ const EntrypointDescriptor& PluginInstance::find_entrypoint(std::string_view ent
     return *found;
 }
 
-ConcurrencyPolicy PluginInstance::policy_for(std::string_view entrypoint_id) const
+int32_t PluginInstance::invoke_locked(const EntrypointDescriptor& entrypoint)
 {
-    const auto found = std::find_if(descriptor_.entrypoints.begin(), descriptor_.entrypoints.end(), [entrypoint_id](const auto& entrypoint) {
-        return entrypoint.id == entrypoint_id;
-    });
-    return found == descriptor_.entrypoints.end() ? descriptor_.concurrency : found->concurrency;
-}
-
-int32_t PluginInstance::invoke_locked(std::string_view entrypoint_id)
-{
-    find_entrypoint(entrypoint_id);
     InvocationContext context{bindings_};
-    return backend_->invoke(entrypoint_id, context);
+    return backend_->invoke(entrypoint.id, context);
 }
 
 std::shared_ptr<PluginInstance::AsyncJob> PluginInstance::find_job(JobHandle handle) const

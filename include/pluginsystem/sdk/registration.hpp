@@ -35,6 +35,7 @@ struct PluginDescription {
     std::vector<PortDescription> ports;
     std::vector<PropertyDescription> properties;
     std::vector<EntrypointDescription> entrypoints;
+    std::uint64_t raw_property_block_size{0};
 };
 
 template <typename TPlugin>
@@ -51,6 +52,12 @@ public:
         EntrypointBuilder& description(std::string description)
         {
             entrypoint().description = std::move(description);
+            return *this;
+        }
+
+        EntrypointBuilder& name(std::string name)
+        {
+            entrypoint().name = std::move(name);
             return *this;
         }
 
@@ -123,6 +130,11 @@ public:
     {
         const auto& property_instance = probe_.*property;
         register_property_description<T>(property_instance.id(), property_instance.name(), readable, writable);
+    }
+
+    void raw_property_block_size(std::uint64_t size)
+    {
+        description_.raw_property_block_size = size;
     }
 
     template <typename TResult>
@@ -224,6 +236,10 @@ private:
         return (probe_.*port).id();
     }
 
+    static_assert(
+        std::is_default_constructible_v<TPlugin>,
+        "Plugin types must be default-constructible (required for port/property ID discovery via PluginRegistration)."
+    );
     TPlugin probe_{};
     PluginDescription description_;
 };

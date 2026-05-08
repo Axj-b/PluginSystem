@@ -4,6 +4,7 @@
 
 #include <pluginsystem/error.hpp>
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -30,8 +31,12 @@ struct SharedMemoryHeader {
     std::uint64_t total_size;
     std::uint64_t payload_size;
     volatile long lock_state;
+    std::uint32_t reserved_{0};
     volatile long long data_version;
 };
+
+static_assert(offsetof(SharedMemoryHeader, data_version) % 8 == 0,
+    "data_version must be 8-byte aligned for InterlockedIncrement64");
 
 unsigned char* payload_start(SharedMemoryChannel::Impl& impl);
 const unsigned char* payload_start(const SharedMemoryChannel::Impl& impl);
@@ -71,8 +76,14 @@ struct ScopedSharedMemoryLock {
         : impl{impl_ref}
     {
 #if defined(_WIN32)
-        while (InterlockedCompareExchange(&impl.header->lock_state, 1, 0) != 0) {
-            Sleep(0);
+        constexpr int k_spin_before_yield = 1000;
+        for (int spin = 0; InterlockedCompareExchange(&impl.header->lock_state, 1, 0) != 0; ++spin) {
+            if (spin < k_spin_before_yield) {
+                YieldProcessor();
+            } else {
+                SwitchToThread();
+                spin = 0;
+            }
         }
 #else
         impl.fallback_mutex.lock();

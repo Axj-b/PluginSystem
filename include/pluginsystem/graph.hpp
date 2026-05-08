@@ -2,6 +2,7 @@
 
 #include <pluginsystem/instance.hpp>
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -53,6 +54,8 @@ struct GraphEdgeConfig {
 struct GraphConfig {
     std::string blueprint_name{"Graph"};
     std::filesystem::path runtime_directory{"pluginsystem_runtime"};
+    // NOTE: workers only parallelize *across* concurrent submit_run() calls.
+    // A single run_once() is always fully sequential (topological order).
     std::uint32_t worker_count{1};
     std::vector<GraphNodeConfig> nodes;
     std::vector<GraphEdgeConfig> edges;
@@ -72,6 +75,7 @@ public:
     void stop();
 
     GraphJobHandle submit_run();
+    bool cancel(GraphJobHandle handle);
     GraphJobStatus status(GraphJobHandle handle) const;
     GraphRunResult wait(GraphJobHandle handle);
     std::optional<GraphRunResult> result(GraphJobHandle handle) const;
@@ -83,6 +87,8 @@ public:
     const PluginDescriptor& node_descriptor(std::string_view node_id) const;
 
 private:
+    enum class State : int { idle, starting, running, stopping };
+
     struct CompiledNode {
         GraphNodeConfig config;
         PluginDescriptor descriptor;
@@ -95,6 +101,7 @@ private:
         GraphJobStatus status{GraphJobStatus::pending};
         GraphRunResult result;
         std::exception_ptr error;
+        bool cancel_requested{false};
     };
 
     void compile(PluginRegistry& registry, GraphConfig config);
@@ -128,6 +135,8 @@ private:
     std::vector<std::size_t> topological_order_;
     std::uint32_t worker_count_{1};
 
+    std::atomic<State> state_{State::idle};
+
     std::mutex run_mutex_;
     mutable std::mutex jobs_mutex_;
     std::unordered_map<GraphJobHandle, std::shared_ptr<Job>> jobs_;
@@ -137,8 +146,6 @@ private:
     mutable std::mutex worker_mutex_;
     std::condition_variable worker_cv_;
     std::vector<std::thread> workers_;
-    bool workers_started_{false};
-    bool stopping_{false};
 };
 
 } // namespace pluginsystem

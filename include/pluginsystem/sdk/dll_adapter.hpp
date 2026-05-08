@@ -5,11 +5,11 @@
 #include <pluginsystem/sdk/ports.hpp>
 #include <pluginsystem/sdk/registration.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -42,7 +42,7 @@ public:
 
         const auto& store = descriptor_store();
         if (config->port_count != store.plugin.port_count || config->property_count != store.plugin.property_count) {
-            return PS_ERROR;
+            return PS_INVALID_ARGUMENT;
         }
 
         auto adapter = std::make_unique<Instance>();
@@ -68,6 +68,7 @@ private:
         std::vector<ps_entrypoint_descriptor> entrypoints;
         std::vector<std::vector<const char*>> input_port_ids;
         std::vector<std::vector<const char*>> output_port_ids;
+        std::unordered_map<std::string, std::size_t> entrypoint_index;
         ps_plugin_descriptor plugin{};
 
         DescriptorStore()
@@ -131,6 +132,8 @@ private:
                     output_port_ids[index].data(),
                     static_cast<std::uint32_t>(output_port_ids[index].size()),
                 });
+
+                entrypoint_index.emplace(entrypoint.id, index);
             }
 
             plugin.abi_version = PLUGINSYSTEM_ABI_VERSION;
@@ -146,7 +149,7 @@ private:
             plugin.port_count = static_cast<std::uint32_t>(ports.size());
             plugin.properties = properties.data();
             plugin.property_count = static_cast<std::uint32_t>(properties.size());
-            plugin.raw_property_block_size = 0;
+            plugin.raw_property_block_size = description.raw_property_block_size;
         }
     };
 
@@ -167,18 +170,15 @@ private:
             return PS_INVALID_ARGUMENT;
         }
 
-        const auto& entrypoints = descriptor_store().description.entrypoints;
-        const std::string_view requested_entrypoint{entrypoint_id};
-        const auto found = std::find_if(entrypoints.begin(), entrypoints.end(), [requested_entrypoint](const auto& entrypoint) {
-            return entrypoint.id == requested_entrypoint;
-        });
-        if (found == entrypoints.end()) {
+        const auto& store = descriptor_store();
+        const auto found = store.entrypoint_index.find(entrypoint_id);
+        if (found == store.entrypoint_index.end()) {
             return PS_NOT_FOUND;
         }
 
         try {
             InvocationScope invocation_scope{context};
-            return found->invoke(*adapter->plugin);
+            return store.description.entrypoints[found->second].invoke(*adapter->plugin);
         } catch (...) {
             return PS_ERROR;
         }
