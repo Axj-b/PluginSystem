@@ -117,8 +117,26 @@ GraphJobHandle GraphRuntime::submit_run()
         throw PluginError{"Cannot submit run: graph failed to start or is stopping"};
     }
 
-    GraphJobHandle handle = 0;
     auto job = std::make_shared<Job>();
+
+    // Initialize per-run in-degree tracking. unique_ptr<atomic[]> avoids the
+    // MoveInsertable requirement that vector<atomic> would impose.
+    job->node_in_degrees = std::make_unique<std::atomic<int>[]>(nodes_.size());
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+        job->node_in_degrees[i].store(static_cast<int>(node_base_indegrees_[i]), std::memory_order_relaxed);
+    }
+
+    // Count initially-ready nodes (in-degree 0) so pending_nodes is set before
+    // any worker can pick up the first tasks and decrement it to zero prematurely.
+    std::size_t ready_count = 0;
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+        if (node_base_indegrees_[i] == 0) {
+            ++ready_count;
+        }
+    }
+    job->pending_nodes.store(ready_count, std::memory_order_relaxed);
+
+    GraphJobHandle handle = 0;
     {
         std::lock_guard<std::mutex> lock{jobs_mutex_};
         handle = next_job_handle_++;
@@ -126,11 +144,73 @@ GraphJobHandle GraphRuntime::submit_run()
     }
 
     {
+        std::lock_guard<std::mutex> lock{job->mutex};
+        job->status = GraphJobStatus::running;
+    }
+    job->cv.notify_all();
+
+    {
         std::lock_guard<std::mutex> lock{worker_mutex_};
-        queue_.push(handle);
+        for (std::size_t i = 0; i < nodes_.size(); ++i) {
+            if (node_base_indegrees_[i] == 0) {
+                node_queue_.push({handle, i});
+            }
+        }
+    }
+    worker_cv_.notify_all();
+
+    return handle;
+}
+
+GraphJobHandle GraphRuntime::submit_single_node(std::string_view node_id)
+{
+    start();
+
+    if (state_.load(std::memory_order_acquire) != State::running) {
+        throw PluginError{"Cannot submit step: graph failed to start or is stopping"};
+    }
+
+    const auto found = node_indices_.find(std::string{node_id});
+    if (found == node_indices_.end()) {
+        throw PluginError{"Graph node does not exist: " + std::string{node_id}};
+    }
+    const std::size_t node_index = found->second;
+
+    auto job = std::make_shared<Job>();
+    job->single_node = true;
+    job->node_in_degrees = std::make_unique<std::atomic<int>[]>(nodes_.size());
+    job->pending_nodes.store(1, std::memory_order_relaxed);
+
+    GraphJobHandle handle = 0;
+    {
+        std::lock_guard<std::mutex> lock{jobs_mutex_};
+        handle = next_job_handle_++;
+        jobs_.emplace(handle, job);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock{job->mutex};
+        job->status = GraphJobStatus::running;
+    }
+    job->cv.notify_all();
+
+    {
+        std::lock_guard<std::mutex> lock{worker_mutex_};
+        node_queue_.push({handle, node_index});
     }
     worker_cv_.notify_one();
+
     return handle;
+}
+
+std::vector<std::string> GraphRuntime::topological_node_ids() const
+{
+    std::vector<std::string> ids;
+    ids.reserve(topological_order_.size());
+    for (const auto idx : topological_order_) {
+        ids.push_back(nodes_[idx].config.node_id);
+    }
+    return ids;
 }
 
 GraphJobStatus GraphRuntime::status(GraphJobHandle handle) const
@@ -170,10 +250,9 @@ bool GraphRuntime::cancel(GraphJobHandle handle)
 {
     auto job = find_job(handle);
     std::lock_guard<std::mutex> lock{job->mutex};
-    if (job->status != GraphJobStatus::pending) {
+    if (is_terminal(job->status)) {
         return false;
     }
-    job->cancel_requested = true;
     job->status = GraphJobStatus::canceled;
     job->cv.notify_all();
     return true;
@@ -376,21 +455,23 @@ void GraphRuntime::validate_edges(
 std::vector<std::size_t> GraphRuntime::compute_topological_order(
     const GraphConfig& config,
     const std::unordered_map<std::string, std::size_t>& node_indices
-) const
+)
 {
-    std::vector<std::vector<std::size_t>> adjacency(nodes_.size());
-    std::vector<std::size_t> indegree(nodes_.size(), 0);
+    node_adjacency_.assign(nodes_.size(), {});
+    node_base_indegrees_.assign(nodes_.size(), 0);
 
     for (const auto& edge : config.edges) {
         const auto source = node_indices.at(edge.source_node_id);
         const auto target = node_indices.at(edge.target_node_id);
-        adjacency[source].push_back(target);
-        ++indegree[target];
+        node_adjacency_[source].push_back(target);
+        ++node_base_indegrees_[target];
     }
 
+    // Kahn's algorithm on a working copy of in-degrees.
+    std::vector<std::size_t> indegree_copy = node_base_indegrees_;
     std::deque<std::size_t> ready;
-    for (std::size_t index = 0; index < indegree.size(); ++index) {
-        if (indegree[index] == 0) {
+    for (std::size_t index = 0; index < indegree_copy.size(); ++index) {
+        if (indegree_copy[index] == 0) {
             ready.push_back(index);
         }
     }
@@ -402,9 +483,9 @@ std::vector<std::size_t> GraphRuntime::compute_topological_order(
         ready.pop_front();
         order.push_back(current);
 
-        for (const auto target : adjacency[current]) {
-            --indegree[target];
-            if (indegree[target] == 0) {
+        for (const auto target : node_adjacency_[current]) {
+            --indegree_copy[target];
+            if (indegree_copy[target] == 0) {
                 ready.push_back(target);
             }
         }
@@ -416,65 +497,86 @@ std::vector<std::size_t> GraphRuntime::compute_topological_order(
     return order;
 }
 
-GraphRunResult GraphRuntime::run_once()
-{
-    std::lock_guard<std::mutex> run_lock{run_mutex_};
-
-    for (const auto node_index : topological_order_) {
-        auto& node = nodes_[node_index];
-        if (node.config.process_entrypoint.empty()) {
-            continue;
-        }
-
-        const auto result = node.instance->invoke(node.config.process_entrypoint);
-        if (result != PS_OK) {
-            return GraphRunResult{result, node.config.node_id};
-        }
-    }
-
-    return GraphRunResult{PS_OK, {}};
-}
-
 void GraphRuntime::worker_loop()
 {
     for (;;) {
-        GraphJobHandle handle = 0;
+        NodeTask task{};
         {
             std::unique_lock<std::mutex> lock{worker_mutex_};
             worker_cv_.wait(lock, [this]() {
-                return state_.load(std::memory_order_relaxed) == State::stopping || !queue_.empty();
+                return state_.load(std::memory_order_relaxed) == State::stopping || !node_queue_.empty();
             });
-            if (state_.load(std::memory_order_relaxed) == State::stopping && queue_.empty()) {
+            if (state_.load(std::memory_order_relaxed) == State::stopping && node_queue_.empty()) {
                 return;
             }
-            handle = queue_.front();
-            queue_.pop();
+            task = node_queue_.front();
+            node_queue_.pop();
         }
 
-        auto job = find_job(handle);
+        auto job = find_job(task.job_handle);
+
+        // Skip execution if the job was canceled or failed by another branch.
+        bool execute = false;
         {
             std::lock_guard<std::mutex> lock{job->mutex};
-            if (job->status == GraphJobStatus::canceled) {
-                job->cv.notify_all();
-                continue;
-            }
-            job->status = GraphJobStatus::running;
+            execute = (job->status == GraphJobStatus::running);
         }
-        job->cv.notify_all();
 
-        try {
-            auto run_result = run_once();
-            {
-                std::lock_guard<std::mutex> lock{job->mutex};
-                job->result = std::move(run_result);
-                job->status = GraphJobStatus::completed;
+        bool node_ok = execute;
+        if (execute) {
+            auto& node = nodes_[task.node_index];
+            if (!node.config.process_entrypoint.empty()) {
+                try {
+                    const int32_t node_result = node.instance->invoke(node.config.process_entrypoint);
+                    if (node_result != PS_OK) {
+                        std::lock_guard<std::mutex> lock{job->mutex};
+                        if (job->result.result == PS_OK) {
+                            job->result = GraphRunResult{node_result, node.config.node_id};
+                        }
+                        node_ok = false;
+                    }
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock{job->mutex};
+                    if (!job->error) {
+                        job->error = std::current_exception();
+                    }
+                    node_ok = false;
+                }
             }
-        } catch (...) {
-            std::lock_guard<std::mutex> lock{job->mutex};
-            job->error = std::current_exception();
-            job->status = GraphJobStatus::failed;
         }
-        job->cv.notify_all();
+
+        // Propagate to successors only when this node succeeded and this is a full run.
+        // The worker that atomically drives a successor's in-degree to zero is the
+        // sole worker that enqueues it — no double-enqueue is possible.
+        std::size_t newly_enqueued = 0;
+        if (node_ok && !job->single_node) {
+            for (const auto successor : node_adjacency_[task.node_index]) {
+                const auto prev = job->node_in_degrees[successor].fetch_sub(1, std::memory_order_acq_rel);
+                if (prev == 1) {
+                    {
+                        std::lock_guard<std::mutex> lock{worker_mutex_};
+                        node_queue_.push({task.job_handle, successor});
+                    }
+                    ++newly_enqueued;
+                }
+            }
+        }
+
+        // Increment pending_nodes BEFORE decrementing our own count so the counter
+        // never reaches zero while there are still tasks in the queue.
+        if (newly_enqueued > 0) {
+            job->pending_nodes.fetch_add(newly_enqueued, std::memory_order_relaxed);
+            worker_cv_.notify_all();
+        }
+
+        const auto remaining = job->pending_nodes.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        if (remaining == 0) {
+            std::lock_guard<std::mutex> lock{job->mutex};
+            if (job->status == GraphJobStatus::running) {
+                job->status = job->error ? GraphJobStatus::failed : GraphJobStatus::completed;
+                job->cv.notify_all();
+            }
+        }
     }
 }
 

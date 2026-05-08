@@ -126,10 +126,11 @@ public:
     }
 
     template <typename T>
-    void property(Property<T> TPlugin::* property, bool readable = true, bool writable = true)
+    void property(Property<T> TPlugin::* property, bool readable = true, bool writable = true,
+                  PropertyConstraints constraints = {})
     {
         const auto& property_instance = probe_.*property;
-        register_property_description<T>(property_instance.id(), property_instance.name(), readable, writable);
+        register_property_description<T>(property_instance.id(), property_instance.name(), readable, writable, constraints);
     }
 
     void raw_property_block_size(std::uint64_t size)
@@ -210,7 +211,8 @@ private:
     }
 
     template <typename T>
-    void register_property_description(std::string id, std::string name, bool readable, bool writable)
+    void register_property_description(std::string id, std::string name, bool readable, bool writable,
+                                       const PropertyConstraints& constraints)
     {
         static_assert(std::is_trivially_copyable_v<T>, "Shared-memory property types must be trivially copyable.");
 
@@ -221,6 +223,10 @@ private:
             sizeof(T),
             readable,
             writable,
+            constraints.default_value,
+            constraints.min_value,
+            constraints.max_value,
+            constraints.enum_options,
         });
     }
 

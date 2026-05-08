@@ -187,18 +187,44 @@ PluginDescriptor copy_descriptor(const ps_plugin_descriptor& source, std::string
 
     for (std::uint32_t index = 0; index < source.property_count; ++index) {
         const auto& c_property = source.properties[index];
-        if (c_property.struct_size < sizeof(ps_property_descriptor)) {
+        // Accept any struct at least as large as the v1 layout (without constraint fields).
+        constexpr auto kPropertyDescV1Size =
+            static_cast<std::uint32_t>(offsetof(ps_property_descriptor, has_default_value));
+        // V2 adds constraint fields; V3 adds enum fields.
+        constexpr auto kPropertyDescV2Size =
+            static_cast<std::uint32_t>(offsetof(ps_property_descriptor, enum_option_count));
+        if (c_property.struct_size < kPropertyDescV1Size) {
             throw PluginError{"Property descriptor struct is too small"};
         }
 
-        descriptor.properties.push_back(PropertyDescriptor{
+        PropertyDescriptor prop{
             safe_string(c_property.id),
             safe_string(c_property.name),
             safe_string(c_property.type_name),
             c_property.byte_size,
             c_property.readable != 0,
             c_property.writable != 0,
-        });
+        };
+
+        if (c_property.struct_size >= kPropertyDescV2Size) {
+            if (c_property.has_default_value) {
+                prop.default_value = c_property.default_value;
+            }
+            if (c_property.has_range) {
+                prop.min_value = c_property.min_value;
+                prop.max_value = c_property.max_value;
+            }
+        }
+
+        if (c_property.struct_size >= static_cast<std::uint32_t>(sizeof(ps_property_descriptor))) {
+            for (std::uint32_t opt = 0; opt < c_property.enum_option_count; ++opt) {
+                if (c_property.enum_options && c_property.enum_options[opt]) {
+                    prop.enum_options.push_back(c_property.enum_options[opt]);
+                }
+            }
+        }
+
+        descriptor.properties.push_back(std::move(prop));
     }
 
     validate_plugin_descriptor(descriptor);

@@ -115,11 +115,7 @@
       "ui_id": 5
     }
   ],
-  "plugin_libraries": [
-    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_producer_plugin.dll",
-    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_processor_plugin.dll",
-    "D:\\develop\\PluginSystem\\build\\windows-msvc-debug\\Debug\\pipeline_presenter_plugin.dll"
-  ],
+  "plugin_libraries": [],
   "runtime_directory": "pluginsystem_runtime",
   "version": 1
 }

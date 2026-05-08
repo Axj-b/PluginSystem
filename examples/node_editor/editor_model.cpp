@@ -1,8 +1,10 @@
 #include "editor_model.hpp"
 
 #include <nlohmann/json.hpp>
+#include <pluginsystem/graph.hpp>
 
 #include <algorithm>
+#include <thread>
 #include <deque>
 #include <fstream>
 #include <set>
@@ -80,7 +82,23 @@ EditorGraph load_editor_graph(const std::filesystem::path& path)
         if (item.contains("properties") && item["properties"].is_object()) {
             for (const auto& property : item["properties"].items()) {
                 if (property.value().is_number()) {
-                    node.float_properties[property.key()] = property.value().get<float>();
+                    node.float_properties[property.key()] = property.value().get<double>();
+                }
+            }
+        }
+
+        if (item.contains("int_properties") && item["int_properties"].is_object()) {
+            for (const auto& property : item["int_properties"].items()) {
+                if (property.value().is_number_integer()) {
+                    node.int_properties[property.key()] = property.value().get<std::int64_t>();
+                }
+            }
+        }
+
+        if (item.contains("bool_properties") && item["bool_properties"].is_object()) {
+            for (const auto& property : item["bool_properties"].items()) {
+                if (property.value().is_boolean()) {
+                    node.bool_properties[property.key()] = property.value().get<bool>();
                 }
             }
         }
@@ -129,6 +147,14 @@ void save_editor_graph(const std::filesystem::path& path, const EditorGraph& gra
         item["properties"] = json::object();
         for (const auto& property : node.float_properties) {
             item["properties"][property.first] = property.second;
+        }
+        item["int_properties"] = json::object();
+        for (const auto& property : node.int_properties) {
+            item["int_properties"][property.first] = property.second;
+        }
+        item["bool_properties"] = json::object();
+        for (const auto& property : node.bool_properties) {
+            item["bool_properties"][property.first] = property.second;
         }
         data["nodes"].push_back(std::move(item));
     }
@@ -284,7 +310,7 @@ GraphConfig make_graph_config(const EditorGraph& graph)
     GraphConfig config;
     config.blueprint_name = graph.blueprint_name;
     config.runtime_directory = graph.runtime_directory;
-    config.worker_count = 1;
+    config.worker_count = std::thread::hardware_concurrency();
     for (const auto& node : graph.nodes) {
         config.nodes.push_back(GraphNodeConfig{
             node.node_id,
@@ -360,6 +386,70 @@ std::vector<std::filesystem::path> merge_plugin_libraries(
         add_unique_path(merged, library);
     }
     return merged;
+}
+
+void apply_node_properties(pluginsystem::GraphRuntime& runtime, const EditorGraph& graph, const DescriptorIndex& descriptors)
+{
+    for (const auto& node : graph.nodes) {
+        const auto* descriptor = find_descriptor(descriptors, node.plugin_id);
+        if (descriptor == nullptr) {
+            continue;
+        }
+
+        for (const auto& property : descriptor->properties) {
+            auto& props = runtime.properties(node.node_id);
+
+            if (property.type_name == "bool" && property.byte_size == sizeof(bool)) {
+                const auto it = node.bool_properties.find(property.id);
+                if (it != node.bool_properties.end()) {
+                    const bool value = it->second;
+                    props.write(property.id, &value, sizeof(value));
+                }
+            } else if (property.type_name == "float" && property.byte_size == sizeof(float)) {
+                const auto it = node.float_properties.find(property.id);
+                if (it != node.float_properties.end()) {
+                    const float value = static_cast<float>(it->second);
+                    props.write(property.id, &value, sizeof(value));
+                }
+            } else if (property.type_name == "double" && property.byte_size == sizeof(double)) {
+                const auto it = node.float_properties.find(property.id);
+                if (it != node.float_properties.end()) {
+                    const double value = it->second;
+                    props.write(property.id, &value, sizeof(value));
+                }
+            } else {
+                const auto it = node.int_properties.find(property.id);
+                if (it == node.int_properties.end()) {
+                    continue;
+                }
+                const std::int64_t raw = it->second;
+                if (property.type_name == "int8_t" && property.byte_size == sizeof(std::int8_t)) {
+                    const auto value = static_cast<std::int8_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "int16_t" && property.byte_size == sizeof(std::int16_t)) {
+                    const auto value = static_cast<std::int16_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "int32_t" && property.byte_size == sizeof(std::int32_t)) {
+                    const auto value = static_cast<std::int32_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "int64_t" && property.byte_size == sizeof(std::int64_t)) {
+                    props.write(property.id, &raw, sizeof(raw));
+                } else if (property.type_name == "uint8_t" && property.byte_size == sizeof(std::uint8_t)) {
+                    const auto value = static_cast<std::uint8_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "uint16_t" && property.byte_size == sizeof(std::uint16_t)) {
+                    const auto value = static_cast<std::uint16_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "uint32_t" && property.byte_size == sizeof(std::uint32_t)) {
+                    const auto value = static_cast<std::uint32_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                } else if (property.type_name == "uint64_t" && property.byte_size == sizeof(std::uint64_t)) {
+                    const auto value = static_cast<std::uint64_t>(raw);
+                    props.write(property.id, &value, sizeof(value));
+                }
+            }
+        }
+    }
 }
 
 } // namespace pluginsystem::examples::node_editor

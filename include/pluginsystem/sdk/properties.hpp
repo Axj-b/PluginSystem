@@ -3,12 +3,26 @@
 #include <pluginsystem/sdk/plugin.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace pluginsystem::sdk {
+
+struct PropertyConstraints {
+    std::optional<double> default_value;
+    std::optional<double> min_value;
+    std::optional<double> max_value;
+    std::vector<std::string> enum_options;
+
+    static PropertyConstraints enum_of(std::vector<std::string> options, int default_index = 0)
+    {
+        return {static_cast<double>(default_index), {}, {}, std::move(options)};
+    }
+};
 
 struct PropertyDescription {
     std::string id;
@@ -17,6 +31,10 @@ struct PropertyDescription {
     std::uint64_t byte_size{0};
     bool readable{true};
     bool writable{true};
+    std::optional<double> default_value;
+    std::optional<double> min_value;
+    std::optional<double> max_value;
+    std::vector<std::string> enum_options;
 };
 
 template <typename T>

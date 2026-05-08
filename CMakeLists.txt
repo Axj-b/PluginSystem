@@ -10,8 +10,16 @@ project(
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(PLUGINSYSTEM_BUILD_EXAMPLES "Build PluginSystem examples" ON)
-option(PLUGINSYSTEM_BUILD_TESTS "Build PluginSystem tests" ON)
+if(PROJECT_IS_TOP_LEVEL)
+    set(PLUGINSYSTEM_DEFAULT_BUILD_EXAMPLES ON)
+    set(PLUGINSYSTEM_DEFAULT_BUILD_TESTS ON)
+else()
+    set(PLUGINSYSTEM_DEFAULT_BUILD_EXAMPLES OFF)
+    set(PLUGINSYSTEM_DEFAULT_BUILD_TESTS OFF)
+endif()
+
+option(PLUGINSYSTEM_BUILD_EXAMPLES "Build PluginSystem examples" ${PLUGINSYSTEM_DEFAULT_BUILD_EXAMPLES})
+option(PLUGINSYSTEM_BUILD_TESTS "Build PluginSystem tests" ${PLUGINSYSTEM_DEFAULT_BUILD_TESTS})
 
 add_library(pluginsystem STATIC
     src/detail/platform_error.cpp
@@ -172,17 +180,23 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     )
     target_link_libraries(graph_pipeline_app PRIVATE PluginSystem::pluginsystem)
 
-    add_executable(node_editor_app
-        examples/node_editor/node_editor_app.cpp
+    add_library(pluginsystem_node_editor STATIC
         examples/node_editor/editor_model.cpp
+        examples/node_editor/node_editor_widget.cpp
     )
-    target_link_libraries(node_editor_app
-        PRIVATE
+    target_include_directories(pluginsystem_node_editor PUBLIC examples/node_editor)
+    target_link_libraries(pluginsystem_node_editor
+        PUBLIC
             PluginSystem::pluginsystem
             pluginsystem_imgui
             pluginsystem_imnodes
             nlohmann_json::nlohmann_json
     )
+
+    add_executable(node_editor_app
+        examples/node_editor/node_editor_app.cpp
+    )
+    target_link_libraries(node_editor_app PRIVATE pluginsystem_node_editor)
 endif()
 
 if(PLUGINSYSTEM_BUILD_TESTS)

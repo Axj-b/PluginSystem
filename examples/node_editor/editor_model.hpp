@@ -2,6 +2,7 @@
 
 #include <pluginsystem/plugin_manager.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -20,7 +21,9 @@ struct EditorNode {
     std::string stop_entrypoint{"Stop"};
     float x{0.0F};
     float y{0.0F};
-    std::unordered_map<std::string, float> float_properties;
+    std::unordered_map<std::string, double> float_properties;
+    std::unordered_map<std::string, std::int64_t> int_properties;
+    std::unordered_map<std::string, bool> bool_properties;
 };
 
 struct EditorEdge {
@@ -62,6 +65,12 @@ EditorNode* find_node(EditorGraph& graph, std::string_view node_id);
 std::vector<std::filesystem::path> merge_plugin_libraries(
     const std::vector<std::filesystem::path>& from_graph,
     const std::vector<std::filesystem::path>& from_cli
+);
+
+void apply_node_properties(
+    pluginsystem::GraphRuntime& runtime,
+    const EditorGraph& graph,
+    const DescriptorIndex& descriptors
 );
 
 } // namespace pluginsystem::examples::node_editor

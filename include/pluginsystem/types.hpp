@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,6 +69,10 @@ struct PropertyDescriptor {
     std::uint64_t byte_size{0};
     bool readable{true};
     bool writable{true};
+    std::optional<double> default_value;
+    std::optional<double> min_value;
+    std::optional<double> max_value;
+    std::vector<std::string> enum_options;
 };
 
 struct EntrypointDescriptor {

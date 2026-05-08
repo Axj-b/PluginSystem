@@ -54,8 +54,8 @@ struct GraphEdgeConfig {
 struct GraphConfig {
     std::string blueprint_name{"Graph"};
     std::filesystem::path runtime_directory{"pluginsystem_runtime"};
-    // NOTE: workers only parallelize *across* concurrent submit_run() calls.
-    // A single run_once() is always fully sequential (topological order).
+    // Controls the number of nodes that can execute in parallel within a single run.
+    // Nodes with no data dependency between them run concurrently up to this limit.
     std::uint32_t worker_count{1};
     std::vector<GraphNodeConfig> nodes;
     std::vector<GraphEdgeConfig> edges;
@@ -75,6 +75,8 @@ public:
     void stop();
 
     GraphJobHandle submit_run();
+    GraphJobHandle submit_single_node(std::string_view node_id);
+    std::vector<std::string> topological_node_ids() const;
     bool cancel(GraphJobHandle handle);
     GraphJobStatus status(GraphJobHandle handle) const;
     GraphRunResult wait(GraphJobHandle handle);
@@ -89,6 +91,11 @@ public:
 private:
     enum class State : int { idle, starting, running, stopping };
 
+    struct NodeTask {
+        GraphJobHandle job_handle{0};
+        std::size_t node_index{0};
+    };
+
     struct CompiledNode {
         GraphNodeConfig config;
         PluginDescriptor descriptor;
@@ -101,7 +108,9 @@ private:
         GraphJobStatus status{GraphJobStatus::pending};
         GraphRunResult result;
         std::exception_ptr error;
-        bool cancel_requested{false};
+        std::atomic<std::size_t> pending_nodes{0};
+        std::unique_ptr<std::atomic<int>[]> node_in_degrees;
+        bool single_node{false};
     };
 
     void compile(PluginRegistry& registry, GraphConfig config);
@@ -114,13 +123,12 @@ private:
     std::vector<std::size_t> compute_topological_order(
         const GraphConfig& config,
         const std::unordered_map<std::string, std::size_t>& node_indices
-    ) const;
+    );
     void validate_edges(
         const GraphConfig& config,
         const std::unordered_map<std::string, std::size_t>& node_indices,
         std::unordered_map<std::string, std::string>& input_sources
     ) const;
-    GraphRunResult run_once();
     void worker_loop();
     std::shared_ptr<Job> find_job(GraphJobHandle handle) const;
     CompiledNode& find_node(std::string_view node_id);
@@ -133,18 +141,19 @@ private:
     std::vector<CompiledNode> nodes_;
     std::unordered_map<std::string, std::size_t> node_indices_;
     std::vector<std::size_t> topological_order_;
+    std::vector<std::vector<std::size_t>> node_adjacency_;
+    std::vector<std::size_t> node_base_indegrees_;
     std::uint32_t worker_count_{1};
 
     std::atomic<State> state_{State::idle};
 
-    std::mutex run_mutex_;
     mutable std::mutex jobs_mutex_;
     std::unordered_map<GraphJobHandle, std::shared_ptr<Job>> jobs_;
-    std::queue<GraphJobHandle> queue_;
     GraphJobHandle next_job_handle_{1};
 
     mutable std::mutex worker_mutex_;
     std::condition_variable worker_cv_;
+    std::queue<NodeTask> node_queue_;
     std::vector<std::thread> workers_;
 };
 

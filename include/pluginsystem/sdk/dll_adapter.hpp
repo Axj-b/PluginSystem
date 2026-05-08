@@ -68,6 +68,7 @@ private:
         std::vector<ps_entrypoint_descriptor> entrypoints;
         std::vector<std::vector<const char*>> input_port_ids;
         std::vector<std::vector<const char*>> output_port_ids;
+        std::vector<std::vector<const char*>> enum_option_ptrs;
         std::unordered_map<std::string, std::size_t> entrypoint_index;
         ps_plugin_descriptor plugin{};
 
@@ -92,7 +93,14 @@ private:
             }
 
             properties.reserve(description.properties.size());
+            enum_option_ptrs.reserve(description.properties.size());
             for (const auto& property : description.properties) {
+                enum_option_ptrs.push_back({});
+                for (const auto& opt : property.enum_options) {
+                    enum_option_ptrs.back().push_back(opt.c_str());
+                }
+                const auto* opts_ptr = enum_option_ptrs.back().empty()
+                    ? nullptr : enum_option_ptrs.back().data();
                 properties.push_back(ps_property_descriptor{
                     static_cast<std::uint32_t>(sizeof(ps_property_descriptor)),
                     property.id.c_str(),
@@ -101,6 +109,13 @@ private:
                     property.byte_size,
                     property.readable ? 1u : 0u,
                     property.writable ? 1u : 0u,
+                    property.default_value.has_value() ? 1u : 0u,
+                    (property.min_value.has_value() && property.max_value.has_value()) ? 1u : 0u,
+                    property.default_value.value_or(0.0),
+                    property.min_value.value_or(0.0),
+                    property.max_value.value_or(0.0),
+                    static_cast<std::uint32_t>(enum_option_ptrs.back().size()),
+                    opts_ptr,
                 });
             }
 

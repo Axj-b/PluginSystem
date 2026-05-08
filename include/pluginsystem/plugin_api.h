@@ -141,6 +141,15 @@ typedef struct ps_property_descriptor {
     uint64_t byte_size;
     uint32_t readable;
     uint32_t writable;
+    /* v2 fields: only valid when struct_size >= offsetof(ps_property_descriptor, enum_option_count) */
+    uint32_t has_default_value;
+    uint32_t has_range;
+    double default_value;
+    double min_value;
+    double max_value;
+    /* v3 fields: only valid when struct_size >= sizeof(ps_property_descriptor) */
+    uint32_t enum_option_count;
+    const char* const* enum_options;
 } ps_property_descriptor;
 
 typedef struct ps_entrypoint_descriptor {
