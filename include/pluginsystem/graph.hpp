@@ -51,12 +51,25 @@ struct GraphEdgeConfig {
     std::string target_port_id;
 };
 
+struct GraphPortInfo {
+    std::string node_id;
+    PortDescriptor descriptor;
+    std::string shared_memory_name;
+};
+
+struct GraphPropertyBlockInfo {
+    std::string node_id;
+    std::string shared_memory_name;
+    std::vector<PropertyDescriptor> properties;
+};
+
 struct GraphConfig {
     std::string blueprint_name{"Graph"};
     std::filesystem::path runtime_directory{"pluginsystem_runtime"};
     // Controls the number of nodes that can execute in parallel within a single run.
     // Nodes with no data dependency between them run concurrently up to this limit.
     std::uint32_t worker_count{1};
+    bool use_shared_memory{true};
     std::vector<GraphNodeConfig> nodes;
     std::vector<GraphEdgeConfig> edges;
 };
@@ -88,6 +101,9 @@ public:
     const SharedPropertyBlock& properties(std::string_view node_id) const;
     const PluginDescriptor& node_descriptor(std::string_view node_id) const;
     void invoke_all(std::string_view entrypoint_id, void* user_context = nullptr);
+
+    std::vector<GraphPortInfo> all_ports() const;
+    std::vector<GraphPropertyBlockInfo> all_property_blocks() const;
 
 private:
     enum class State : int { idle, starting, running, stopping };
@@ -145,6 +161,7 @@ private:
     std::vector<std::vector<std::size_t>> node_adjacency_;
     std::vector<std::size_t> node_base_indegrees_;
     std::uint32_t worker_count_{1};
+    bool use_shared_memory_{true};
 
     std::atomic<State> state_{State::idle};
 

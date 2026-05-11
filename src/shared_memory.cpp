@@ -49,6 +49,12 @@ struct SharedMemoryChannel::Impl {
     std::uint64_t total_size{0};
     SharedMemoryHeader* header{nullptr};
     unsigned char* view{nullptr};
+
+    // Local mode (all platforms): heap-only, no OS mapping, no global name store.
+    // Non-null local_mutex indicates local mode.
+    std::vector<unsigned char> local_storage;
+    std::unique_ptr<std::mutex> local_mutex;
+
 #if defined(_WIN32)
     HANDLE mapping{nullptr};
 #else
@@ -59,6 +65,9 @@ struct SharedMemoryChannel::Impl {
     ~Impl()
     {
 #if defined(_WIN32)
+        if (local_mutex) {
+            return; // local_storage is a member; no OS handles to release
+        }
         if (view != nullptr) {
             UnmapViewOfFile(view);
         }
@@ -75,6 +84,10 @@ struct ScopedSharedMemoryLock {
     explicit ScopedSharedMemoryLock(SharedMemoryChannel::Impl& impl_ref)
         : impl{impl_ref}
     {
+        if (impl.local_mutex) {
+            impl.local_mutex->lock();
+            return;
+        }
 #if defined(_WIN32)
         constexpr int k_spin_before_yield = 1000;
         for (int spin = 0; InterlockedCompareExchange(&impl.header->lock_state, 1, 0) != 0; ++spin) {
@@ -93,6 +106,10 @@ struct ScopedSharedMemoryLock {
 
     ~ScopedSharedMemoryLock()
     {
+        if (impl.local_mutex) {
+            impl.local_mutex->unlock();
+            return;
+        }
 #if defined(_WIN32)
         InterlockedExchange(&impl.header->lock_state, 0);
 #else
@@ -109,6 +126,10 @@ struct ScopedSharedMemoryLock {
 
 void increment_version(SharedMemoryChannel::Impl& impl)
 {
+    if (impl.local_mutex) {
+        ++impl.header->data_version;
+        return;
+    }
 #if defined(_WIN32)
     InterlockedIncrement64(&impl.header->data_version);
 #else
@@ -194,6 +215,32 @@ std::unique_ptr<SharedMemoryChannel::Impl> create_shared_memory_impl(const std::
     return impl;
 }
 
+std::unique_ptr<SharedMemoryChannel::Impl> create_local_impl(const std::string& name, std::uint64_t payload_size)
+{
+    if (payload_size == 0) {
+        payload_size = 1;
+    }
+
+    auto impl = std::make_unique<SharedMemoryChannel::Impl>();
+    impl->name = name;
+    impl->payload_size = payload_size;
+    impl->total_size = sizeof(SharedMemoryHeader) + payload_size;
+    impl->local_mutex = std::make_unique<std::mutex>();
+    impl->local_storage.resize(static_cast<std::size_t>(impl->total_size));
+    impl->view = impl->local_storage.data();
+
+    impl->header = reinterpret_cast<SharedMemoryHeader*>(impl->view);
+    impl->header->magic = shared_memory_magic;
+    impl->header->version = shared_memory_version;
+    impl->header->total_size = impl->total_size;
+    impl->header->payload_size = payload_size;
+    impl->header->lock_state = 0;
+    impl->header->data_version = 0;
+    std::memset(payload_start(*impl), 0, static_cast<std::size_t>(payload_size));
+
+    return impl;
+}
+
 std::unique_ptr<SharedMemoryChannel::Impl> open_shared_memory_impl(const std::string& name)
 {
     auto impl = std::make_unique<SharedMemoryChannel::Impl>();
@@ -246,6 +293,11 @@ SharedMemoryChannel& SharedMemoryChannel::operator=(SharedMemoryChannel&&) noexc
 std::shared_ptr<SharedMemoryChannel> SharedMemoryChannel::create(std::string name, std::uint64_t payload_size)
 {
     return std::shared_ptr<SharedMemoryChannel>{new SharedMemoryChannel{create_shared_memory_impl(name, payload_size)}};
+}
+
+std::shared_ptr<SharedMemoryChannel> SharedMemoryChannel::create_local(std::string name, std::uint64_t payload_size)
+{
+    return std::shared_ptr<SharedMemoryChannel>{new SharedMemoryChannel{create_local_impl(name, payload_size)}};
 }
 
 std::shared_ptr<SharedMemoryChannel> SharedMemoryChannel::open(std::string name)
@@ -322,4 +374,3 @@ void SharedMemoryChannel::write_at(std::uint64_t offset, const void* data, std::
 }
 
 }
-

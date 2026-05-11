@@ -22,6 +22,7 @@ public:
     SharedMemoryChannel& operator=(SharedMemoryChannel&&) noexcept;
 
     static std::shared_ptr<SharedMemoryChannel> create(std::string name, std::uint64_t payload_size);
+    static std::shared_ptr<SharedMemoryChannel> create_local(std::string name, std::uint64_t payload_size);
     static std::shared_ptr<SharedMemoryChannel> open(std::string name);
 
     const std::string& name() const noexcept;
@@ -49,6 +50,11 @@ public:
     };
 
     static std::shared_ptr<SharedPropertyBlock> create(
+        std::string name,
+        const std::vector<PropertyDescriptor>& properties,
+        std::uint64_t raw_property_block_size
+    );
+    static std::shared_ptr<SharedPropertyBlock> create_local(
         std::string name,
         const std::vector<PropertyDescriptor>& properties,
         std::uint64_t raw_property_block_size

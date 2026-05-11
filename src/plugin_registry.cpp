@@ -90,12 +90,16 @@ RuntimeBindings PluginRegistry::create_bindings(const PluginDescriptor& descript
 
         bindings.ports.push_back(PortRuntimeBinding{
             port,
-            SharedMemoryChannel::create(std::move(name), port.byte_size),
+            config.use_shared_memory
+                ? SharedMemoryChannel::create(std::move(name), port.byte_size)
+                : SharedMemoryChannel::create_local(std::move(name), port.byte_size),
         });
     }
 
     const auto properties_name = make_shared_memory_name(config.blueprint_name, config.instance_name, "properties", "properties");
-    bindings.properties = SharedPropertyBlock::create(properties_name, descriptor.properties, descriptor.raw_property_block_size);
+    bindings.properties = config.use_shared_memory
+        ? SharedPropertyBlock::create(properties_name, descriptor.properties, descriptor.raw_property_block_size)
+        : SharedPropertyBlock::create_local(properties_name, descriptor.properties, descriptor.raw_property_block_size);
     return bindings;
 }
 

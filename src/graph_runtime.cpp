@@ -294,12 +294,39 @@ void GraphRuntime::invoke_all(std::string_view entrypoint_id, void* user_context
     }
 }
 
-void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config)
+std::vector<GraphPortInfo> GraphRuntime::all_ports() const
 {
+    std::vector<GraphPortInfo> result;
+    for (const auto& node : nodes_) {
+        for (const auto& port_desc : node.descriptor.ports) {
+            result.push_back({node.config.node_id, port_desc, node.instance->port(port_desc.id).name()});
+        }
+    }
+    return result;
+}
+
+std::vector<GraphPropertyBlockInfo> GraphRuntime::all_property_blocks() const
+{
+    std::vector<GraphPropertyBlockInfo> result;
+    result.reserve(nodes_.size());
+    for (const auto& node : nodes_) {
+        const auto& props = node.instance->properties();
+        std::vector<PropertyDescriptor> descriptors;
+        descriptors.reserve(props.slots().size());
+        for (const auto& slot : props.slots()) {
+            descriptors.push_back(slot.descriptor);
+        }
+        result.push_back({node.config.node_id, props.memory().name(), std::move(descriptors)});
+    }
+    return result;
+}
+
+void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config){
     if (config.nodes.empty()) {
         throw PluginError{"Graph must contain at least one node"};
     }
     worker_count_ = config.worker_count == 0 ? 1 : config.worker_count;
+    use_shared_memory_ = config.use_shared_memory;
 
     nodes_.reserve(config.nodes.size());
     std::set<std::string> instance_names;
@@ -352,7 +379,9 @@ void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config)
             }
             output_channels.emplace(
                 port_key(node.config.node_id, port.id),
-                SharedMemoryChannel::create(std::move(name), port.byte_size)
+                use_shared_memory_
+                    ? SharedMemoryChannel::create(std::move(name), port.byte_size)
+                    : SharedMemoryChannel::create_local(std::move(name), port.byte_size)
             );
         }
     }
@@ -401,7 +430,9 @@ RuntimeBindings GraphRuntime::create_bindings_for_node(
                 channel = found->second;
             } else {
                 auto name = make_shared_memory_name(config.blueprint_name, node.config.instance_name, member_name(port), "input");
-                channel = SharedMemoryChannel::create(std::move(name), port.byte_size);
+                channel = use_shared_memory_
+                    ? SharedMemoryChannel::create(std::move(name), port.byte_size)
+                    : SharedMemoryChannel::create_local(std::move(name), port.byte_size);
             }
         }
 
@@ -412,7 +443,9 @@ RuntimeBindings GraphRuntime::create_bindings_for_node(
     }
 
     const auto properties_name = make_shared_memory_name(config.blueprint_name, node.config.instance_name, "properties", "properties");
-    bindings.properties = SharedPropertyBlock::create(properties_name, node.descriptor.properties, node.descriptor.raw_property_block_size);
+    bindings.properties = use_shared_memory_
+        ? SharedPropertyBlock::create(properties_name, node.descriptor.properties, node.descriptor.raw_property_block_size)
+        : SharedPropertyBlock::create_local(properties_name, node.descriptor.properties, node.descriptor.raw_property_block_size);
     return bindings;
 }
 

@@ -101,6 +101,7 @@ struct PluginInstanceConfig {
     std::string blueprint_name{"Blueprint"};
     std::string instance_name{"Instance"};
     std::filesystem::path runtime_directory{"pluginsystem_runtime"};
+    bool use_shared_memory{true};
 };
 
 std::string make_shared_memory_name(

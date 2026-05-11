@@ -29,6 +29,28 @@ std::shared_ptr<SharedPropertyBlock> SharedPropertyBlock::create(
     };
 }
 
+std::shared_ptr<SharedPropertyBlock> SharedPropertyBlock::create_local(
+    std::string name,
+    const std::vector<PropertyDescriptor>& properties,
+    std::uint64_t raw_property_block_size
+)
+{
+    std::vector<Slot> slots;
+    std::uint64_t offset = 0;
+    slots.reserve(properties.size());
+
+    for (const auto& property : properties) {
+        slots.push_back(Slot{property, offset});
+        offset += property.byte_size;
+    }
+
+    const std::uint64_t payload_size = offset + raw_property_block_size;
+    auto memory = SharedMemoryChannel::create_local(std::move(name), payload_size == 0 ? 1 : payload_size);
+    return std::shared_ptr<SharedPropertyBlock>{
+        new SharedPropertyBlock{std::move(memory), std::move(slots), offset, raw_property_block_size}
+    };
+}
+
 SharedPropertyBlock::SharedPropertyBlock(
     std::shared_ptr<SharedMemoryChannel> memory,
     std::vector<Slot> slots,
