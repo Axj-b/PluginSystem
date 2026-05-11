@@ -116,18 +116,13 @@ const SharedPropertyBlock& PluginInstance::properties() const
     return *bindings_.properties;
 }
 
-void PluginInstance::render(void* user_context)
-{
-    backend_->render(user_context);
-}
-
-int32_t PluginInstance::invoke(std::string_view entrypoint_id)
+int32_t PluginInstance::invoke(std::string_view entrypoint_id, void* user_context)
 {
     const EntrypointDescriptor& entrypoint = find_entrypoint(entrypoint_id);
     switch (entrypoint.concurrency) {
     case ConcurrencyPolicy::instance_serialized: {
         std::lock_guard<std::mutex> lock{instance_mutex_};
-        return invoke_locked(entrypoint);
+        return invoke_locked(entrypoint, user_context);
     }
     case ConcurrencyPolicy::entrypoint_serialized: {
         std::mutex* mutex = nullptr;
@@ -140,12 +135,12 @@ int32_t PluginInstance::invoke(std::string_view entrypoint_id)
             mutex = entry.get();
         }
         std::lock_guard<std::mutex> lock{*mutex};
-        return invoke_locked(entrypoint);
+        return invoke_locked(entrypoint, user_context);
     }
     case ConcurrencyPolicy::fully_concurrent:
-        return invoke_locked(entrypoint);
+        return invoke_locked(entrypoint, user_context);
     }
-    return invoke_locked(entrypoint);
+    return invoke_locked(entrypoint, user_context);
 }
 
 JobHandle PluginInstance::submit(std::string_view entrypoint_id)
@@ -254,9 +249,9 @@ const EntrypointDescriptor& PluginInstance::find_entrypoint(std::string_view ent
     return *found;
 }
 
-int32_t PluginInstance::invoke_locked(const EntrypointDescriptor& entrypoint)
+int32_t PluginInstance::invoke_locked(const EntrypointDescriptor& entrypoint, void* user_context)
 {
-    InvocationContext context{bindings_};
+    InvocationContext context{bindings_, user_context};
     return backend_->invoke(entrypoint.id, context);
 }
 

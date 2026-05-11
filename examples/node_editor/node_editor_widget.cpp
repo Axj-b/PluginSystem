@@ -143,7 +143,7 @@ void NodeEditorApp::draw()
 void NodeEditorApp::draw_plugin_windows()
 {
     if (runtime_) {
-        runtime_->render_nodes(ImGui::GetCurrentContext());
+        runtime_->invoke_all("Render", ImGui::GetCurrentContext());
     }
 }
 

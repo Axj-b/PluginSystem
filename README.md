@@ -196,8 +196,8 @@ See `examples/MyUserPlugin.h` / `examples/MyUserPlugin.cpp` for a complete plugi
 
 ## Architecture Docs
 
+- `docs/ARCHITECTURE.md` — component overview and render call sequence diagrams
 - `docs/IMPLEMENTATION_PLAN.md`
-- `docs/ARCHITECTURE.md`
 - `docs/PLUGIN_ABI.md`
 - `docs/SHARED_MEMORY.md`
 - `docs/ROADMAP.md`

@@ -1,5 +1,78 @@
 # PluginSystem Architecture
 
+## Component Overview
+
+```mermaid
+graph TB
+    subgraph HOST["Host Process"]
+        direction TB
+        NE["NodeEditorApp\n(Application)"]
+        GR["GraphRuntime"]
+        PI["PluginInstance"]
+        BE["DllPluginInstanceBackend\nholds C function pointers"]
+
+        NE -->|"render_nodes(void* ctx)"| GR
+        GR -->|"render(ctx)"| PI
+        PI -->|"render(ctx)"| BE
+    end
+
+    subgraph CABI["C ABI — ps_plugin_instance (host-allocated C struct)"]
+        direction LR
+        INVOKE["invoke (fn ptr)"]
+        DESTROY["destroy (fn ptr)"]
+        RENDER["render (fn ptr)"]
+    end
+
+    subgraph DLL["Plugin DLL  (separate binary)"]
+        direction TB
+        CEXP["C exports\npluginystem_discover_plugin\npluginystem_create_plugin_instance"]
+        DA["DllAdapter&lt;TPlugin&gt;\nexamples/sdk/dll_adapter.hpp\ninstantiated inside this DLL"]
+        PLUGIN["TPlugin : PluginBase\n(user plugin code)"]
+
+        CEXP --> DA
+        DA -->|"C++ virtual call\n(same binary — no ABI boundary)"| PLUGIN
+    end
+
+    BE -->|"calls fn ptr"| INVOKE
+    BE -->|"calls fn ptr"| RENDER
+    INVOKE -->|"dispatches to"| DA
+    RENDER -->|"dispatches to"| DA
+    DA -.->|"fills fn ptrs\nduring create_instance"| CABI
+```
+
+> `DllAdapter` is a header-only template compiled **into the plugin DLL** via `PLUGINSYSTEM_EXPORT_PLUGIN`.
+> C++ calls such as `plugin->HasRender()` or `plugin->Render()` never cross a binary boundary —
+> they are ordinary virtual calls within the same `.dll`.
+> The host only ever touches the `ps_plugin_instance` C function pointers, which is the true stable boundary.
+
+---
+
+## Render Call Flow
+
+```mermaid
+sequenceDiagram
+    participant NE  as NodeEditorApp
+    participant GR  as GraphRuntime
+    participant PI  as PluginInstance
+    participant BE  as DllPluginInstanceBackend
+    participant FP  as ps_plugin_instance.render (C fn ptr)
+    participant DA  as DllAdapter::render_fn (plugin DLL)
+    participant P   as TPlugin::Render (user code)
+
+    NE  ->> GR : render_nodes(ImGui::GetCurrentContext())
+    loop for each node
+        GR  ->> PI : render(ctx)
+        PI  ->> BE : render(ctx)
+        BE  ->> FP : render_fn_(instance_, ctx)
+        note over BE,FP: ── C ABI boundary ──
+        FP  ->> DA : render_fn(instance, ctx)
+        DA  ->> P  : plugin->Render(ctx)
+        P   ->> P  : ImGui::SetCurrentContext(ctx)<br/>ImGui::Begin / Text / End
+    end
+```
+
+---
+
 ## System Boundary
 
 PluginSystem is a reusable C++ runtime library for node-editor style pipelines. It provides runtime primitives: plugin provider registration, discovery, instance creation, shared-memory ports, shared-memory properties, and entrypoint invocation.

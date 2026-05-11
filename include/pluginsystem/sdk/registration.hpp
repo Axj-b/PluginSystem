@@ -140,8 +140,7 @@ public:
 
     template <typename TResult>
     EntrypointBuilder entrypoint(std::string id, TResult (TPlugin::* method)())
-    {
-        static_assert(
+    {        static_assert(
             std::is_same_v<TResult, void> || std::is_same_v<TResult, int>,
             "Plugin entrypoints must return void or int."
         );
@@ -163,6 +162,43 @@ public:
                     return static_cast<int32_t>(PS_OK);
                 } else {
                     return static_cast<int32_t>((typed_plugin.*method)());
+                }
+            },
+        });
+
+        return EntrypointBuilder{*this, description_.entrypoints.size() - 1};
+    }
+
+    template <typename TResult>
+    EntrypointBuilder entrypoint(std::string id, TResult (TPlugin::* method)(void*))
+    {
+        static_assert(
+            std::is_same_v<TResult, void> || std::is_same_v<TResult, int>,
+            "Plugin entrypoints must return void or int."
+        );
+
+        auto name = id;
+
+        description_.entrypoints.push_back(EntrypointDescription{
+            std::move(id),
+            std::move(name),
+            {},
+            description_.concurrency,
+            {},
+            {},
+            {},
+            [method](void* plugin) {
+                const auto& ctx = InvocationScope::current();
+                constexpr auto kUserCtxEnd = static_cast<std::uint32_t>(
+                    offsetof(ps_invocation_context, user_context)
+                    + sizeof(ps_invocation_context::user_context));
+                void* user_ctx = (ctx.struct_size >= kUserCtxEnd) ? ctx.user_context : nullptr;
+                auto& typed_plugin = *static_cast<TPlugin*>(plugin);
+                if constexpr (std::is_same_v<TResult, void>) {
+                    (typed_plugin.*method)(user_ctx);
+                    return static_cast<int32_t>(PS_OK);
+                } else {
+                    return static_cast<int32_t>((typed_plugin.*method)(user_ctx));
                 }
             },
         });

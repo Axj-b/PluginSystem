@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstddef>
 #include <filesystem>
 #include <utility>
 
@@ -21,9 +20,6 @@ public:
         , library_{std::move(library)}
         , instance_{instance}
     {
-        if (instance_.struct_size >= static_cast<std::uint32_t>(sizeof(ps_plugin_instance))) {
-            render_fn_ = instance_.render;
-        }
     }
 
     ~DllPluginInstanceBackend() override
@@ -45,13 +41,6 @@ public:
         return instance_.invoke(instance_.instance, entrypoint.c_str(), &c_context);
     }
 
-    void render(void* user_context) override
-    {
-        if (render_fn_ != nullptr) {
-            render_fn_(instance_.instance, user_context);
-        }
-    }
-
     std::filesystem::path loaded_path() const override
     {
         return loaded_path_;
@@ -61,7 +50,6 @@ private:
     std::filesystem::path loaded_path_;
     std::unique_ptr<detail::SharedLibrary> library_;
     ps_plugin_instance instance_{};
-    void (*render_fn_)(void* instance, void* user_context){nullptr};
 };
 
 } // namespace
@@ -178,7 +166,7 @@ std::unique_ptr<PluginInstanceBackend> DllPluginProvider::create_instance(
         throw PluginError{"Plugin instance creation failed for '" + descriptor.id + "'"};
     }
     if (instance.abi_version != PLUGINSYSTEM_ABI_VERSION
-        || instance.struct_size < static_cast<std::uint32_t>(offsetof(ps_plugin_instance, render))) {
+        || instance.struct_size < static_cast<std::uint32_t>(sizeof(ps_plugin_instance))) {
         throw PluginError{"Plugin instance ABI is incompatible for '" + descriptor.id + "'"};
     }
     if (instance.invoke == nullptr || instance.destroy == nullptr) {

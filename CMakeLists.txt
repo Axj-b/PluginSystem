@@ -93,7 +93,7 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     )
     FetchContent_MakeAvailable(glfw nlohmann_json imgui)
 
-    set(PLUGINSYSTEM_IMNODES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/3rd-party/imnodes")
+    set(PLUGINSYSTEM_IMNODES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rd-party/imnodes")
     if(NOT EXISTS "${PLUGINSYSTEM_IMNODES_SOURCE_DIR}/imnodes.cpp")
         message(FATAL_ERROR "Vendored imnodes source not found at ${PLUGINSYSTEM_IMNODES_SOURCE_DIR}")
     endif()

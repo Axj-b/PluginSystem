@@ -19,7 +19,6 @@ class PluginInstanceBackend {
 public:
     virtual ~PluginInstanceBackend() = default;
     virtual int32_t invoke(std::string_view entrypoint_id, InvocationContext& context) = 0;
-    virtual void render(void* user_context) { (void)user_context; }
     virtual std::filesystem::path loaded_path() const;
 };
 
@@ -52,8 +51,7 @@ public:
     SharedPropertyBlock& properties();
     const SharedPropertyBlock& properties() const;
 
-    int32_t invoke(std::string_view entrypoint_id);
-    void render(void* user_context);
+    int32_t invoke(std::string_view entrypoint_id, void* user_context = nullptr);
     JobHandle submit(std::string_view entrypoint_id);
     JobStatus job_status(JobHandle handle) const;
     int32_t wait(JobHandle handle);
@@ -73,7 +71,7 @@ private:
     );
 
     const EntrypointDescriptor& find_entrypoint(std::string_view entrypoint_id) const;
-    int32_t invoke_locked(const EntrypointDescriptor& entrypoint);
+    int32_t invoke_locked(const EntrypointDescriptor& entrypoint, void* user_context);
     std::shared_ptr<AsyncJob> find_job(JobHandle handle) const;
     void join_jobs() noexcept;
 

@@ -8,8 +8,9 @@
 
 namespace pluginsystem {
 
-InvocationContext::InvocationContext(RuntimeBindings& bindings)
+InvocationContext::InvocationContext(RuntimeBindings& bindings, void* user_context)
     : bindings_{&bindings}
+    , user_context_{user_context}
 {
 }
 
@@ -76,6 +77,7 @@ ps_invocation_context InvocationContext::c_context() noexcept
     context.read_property = &InvocationContext::read_property_thunk;
     context.write_property = &InvocationContext::write_property_thunk;
     context.get_raw_property_block = &InvocationContext::get_raw_property_block_thunk;
+    context.user_context = user_context_;
     return context;
 }
 

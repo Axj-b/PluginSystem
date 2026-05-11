@@ -23,12 +23,6 @@ public:
         return PS_OK;
     }
 
-    virtual bool HasRender() const
-    {
-        return false;
-    }
-
-    virtual void Render(void* /*user_context*/) {}
 };
 
 } // namespace pluginsystem::examples

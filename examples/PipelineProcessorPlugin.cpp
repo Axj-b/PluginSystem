@@ -37,6 +37,9 @@ void PipelineProcessorPlugin::Register(pluginsystem::sdk::PluginRegistration<Pip
         .reads(&PipelineProcessorPlugin::frame_input_)
         .writes(&PipelineProcessorPlugin::frame_output_)
         .triggeredBy(&PipelineProcessorPlugin::frame_input_);
+
+    api.entrypoint("Render", &PipelineProcessorPlugin::Render)
+        .description("Renders ImGui window with live processor values");
 }
 
 int PipelineProcessorPlugin::Start()

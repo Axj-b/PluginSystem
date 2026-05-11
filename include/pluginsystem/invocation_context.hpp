@@ -22,7 +22,7 @@ struct RuntimeBindings {
 
 class InvocationContext {
 public:
-    explicit InvocationContext(RuntimeBindings& bindings);
+    explicit InvocationContext(RuntimeBindings& bindings, void* user_context = nullptr);
 
     void read_port(std::string_view port_id, void* out_data, std::uint64_t byte_size) const;
     void write_port(std::string_view port_id, const void* data, std::uint64_t byte_size);
@@ -46,6 +46,7 @@ private:
     const PortRuntimeBinding& find_port(std::string_view port_id) const;
 
     RuntimeBindings* bindings_{nullptr};
+    void* user_context_{nullptr};
 };
 
 }

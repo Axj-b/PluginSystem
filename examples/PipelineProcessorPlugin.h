@@ -13,9 +13,7 @@ public:
     int Start() override;
     int Stop() override;
     void Process();
-
-    bool HasRender() const override { return true; }
-    void Render(void* user_context) override;
+    void Render(void* user_context);
 
 private:
     pluginsystem::sdk::InputPort<PipelineExample::PipelineFrame> frame_input_{"FrameIn"};

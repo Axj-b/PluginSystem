@@ -285,10 +285,12 @@ const PluginDescriptor& GraphRuntime::node_descriptor(std::string_view node_id) 
     return find_node(node_id).descriptor;
 }
 
-void GraphRuntime::render_nodes(void* user_context)
+void GraphRuntime::invoke_all(std::string_view entrypoint_id, void* user_context)
 {
     for (auto& node : nodes_) {
-        node.instance->render(user_context);
+        if (has_entrypoint(node.descriptor, entrypoint_id)) {
+            node.instance->invoke(entrypoint_id, user_context);
+        }
     }
 }
 
