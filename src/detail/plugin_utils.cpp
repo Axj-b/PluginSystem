@@ -106,7 +106,7 @@ void validate_plugin_descriptor(const PluginDescriptor& descriptor)
         if (port.id.empty()) {
             throw PluginError{"Plugin '" + descriptor.id + "' has a port without an id"};
         }
-        if (port.byte_size == 0) {
+        if (port.byte_size == 0 && !port.any_type) {
             throw PluginError{"Plugin '" + descriptor.id + "' port '" + port.id + "' has byte size 0"};
         }
         if (!port_ids.insert(port.id).second) {

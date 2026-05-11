@@ -57,6 +57,7 @@ private:
     void start_continuous_run();
     void tick_continuous_run();
     void try_call(std::function<void()> fn);
+    void try_update_replay_v2_node(pluginsystem::examples::node_editor::EditorNode& node);
     void trim_messages();
     std::vector<std::filesystem::path> current_libraries() const;
 

@@ -24,6 +24,7 @@ struct EditorNode {
     std::unordered_map<std::string, double> float_properties;
     std::unordered_map<std::string, std::int64_t> int_properties;
     std::unordered_map<std::string, bool> bool_properties;
+    std::unordered_map<std::string, std::string> string_properties;
 };
 
 struct EditorEdge {

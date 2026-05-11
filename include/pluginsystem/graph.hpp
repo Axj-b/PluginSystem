@@ -135,7 +135,8 @@ private:
         const GraphConfig& config,
         const CompiledNode& node,
         const std::unordered_map<std::string, std::shared_ptr<SharedMemoryChannel>>& output_channels,
-        const std::unordered_map<std::string, std::string>& input_sources
+        const std::unordered_map<std::string, std::string>& input_sources,
+        const std::unordered_map<std::string, PortDescriptor>& output_port_descriptors
     );
     std::vector<std::size_t> compute_topological_order(
         const GraphConfig& config,

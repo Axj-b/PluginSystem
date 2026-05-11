@@ -1,12 +1,14 @@
 #include "node_editor_widget.hpp"
 
 #include <dll_plugin_provider.hpp>
+#include <recorder_plugins.hpp>
 
 #include <imgui.h>
 #include <imnodes.h>
 
 #include <array>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -158,6 +160,13 @@ void NodeEditorApp::reload_plugins()
     stop_runtime_internal();
     registry_ = make_registry(graph_.plugin_libraries);
     descriptors_ = node_editor::make_descriptor_index(registry_->discover_plugins());
+
+    // Register one universal multi-port recorder and a blank replay template.
+    registry_->register_builtin(pluginsystem::builtins::make_recorder());
+    registry_->register_builtin(pluginsystem::builtins::make_replay(
+        "pluginsystem.builtin.replay", {}));
+    descriptors_ = node_editor::make_descriptor_index(registry_->discover_plugins());
+
     dirty_ = true;
     messages_.push_back("Discovered " + std::to_string(descriptors_.descriptors.size()) + " plugin(s).");
 }
@@ -165,6 +174,58 @@ void NodeEditorApp::reload_plugins()
 void NodeEditorApp::refresh_validation()
 {
     validation_messages_ = node_editor::validate_editor_graph(graph_, descriptors_);
+}
+
+void NodeEditorApp::try_update_replay_v2_node(node_editor::EditorNode& node)
+{
+    const auto it = node.string_properties.find("InputPath");
+    if (it == node.string_properties.end() || it->second.empty()) return;
+
+    auto port_infos = pluginsystem::builtins::read_recording_ports(it->second);
+    if (port_infos.empty()) return;
+
+    // Sanitize a string for use in a plugin id
+    auto sanitize = [](const std::string& s) {
+        std::string r;
+        for (const char c : s) {
+            r += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '_';
+        }
+        return r.empty() ? "unnamed" : r;
+    };
+
+    // Canonical id encodes structure (byte sizes) + port names so each unique
+    // recording layout gets its own typed descriptor
+    std::string new_plugin_id = "pluginsystem.builtin.replay." + std::to_string(port_infos.size());
+    for (const auto& info : port_infos) {
+        new_plugin_id += "." + std::to_string(info.byte_size);
+    }
+    for (const auto& info : port_infos) {
+        new_plugin_id += "." + sanitize(info.port_name);
+    }
+
+    if (node.plugin_id == new_plugin_id) return;
+
+    // Register typed replay variant if not already known
+    if (node_editor::find_descriptor(descriptors_, new_plugin_id) == nullptr) {
+        registry_->register_builtin(pluginsystem::builtins::make_replay(new_plugin_id, port_infos));
+        descriptors_ = node_editor::make_descriptor_index(registry_->discover_plugins());
+    }
+
+    // Remove edges from old output ports (they are now invalid)
+    graph_.edges.erase(
+        std::remove_if(graph_.edges.begin(), graph_.edges.end(),
+            [&](const auto& edge) { return edge.source_node_id == node.node_id; }),
+        graph_.edges.end()
+    );
+
+    node.plugin_id = new_plugin_id;
+    if (node.string_properties.find("InputPath") == node.string_properties.end()) {
+        node.string_properties["InputPath"] = it->second;
+    }
+    if (node.int_properties.find("Loop") == node.int_properties.end()) {
+        node.int_properties["Loop"] = 0;
+    }
+    refresh_validation();
 }
 
 void NodeEditorApp::draw_top_bar()
@@ -314,15 +375,62 @@ void NodeEditorApp::draw_canvas()
         if (descriptor == nullptr) {
             ImGui::TextUnformatted("Missing plugin");
         } else {
-            for (const auto& port : descriptor->ports) {
-                if (port.direction != pluginsystem::PortDirection::input) {
-                    continue;
+            if (descriptor->expandable_inputs) {
+                // Dynamic: show connected ports + 1 unconnected (minimum 1)
+                int last_connected = -1;
+                for (const auto& edge : graph_.edges) {
+                    if (edge.target_node_id != node.node_id) continue;
+                    const auto& pid = edge.target_port_id;
+                    if (pid.size() > 5 && pid.rfind("Input", 0) == 0) {
+                        try { last_connected = std::max(last_connected, std::stoi(pid.substr(5))); }
+                        catch (...) {}
+                    }
                 }
-                const auto id = pin_id(node.node_id, port.id, false);
-                pin_refs_[id] = PinRef{node.node_id, port.id, false};
-                ImNodes::BeginInputAttribute(id);
-                ImGui::Text("%s", port.id.c_str());
-                ImNodes::EndInputAttribute();
+                int total_inputs = 0;
+                for (const auto& p : descriptor->ports) {
+                    if (p.direction == pluginsystem::PortDirection::input) ++total_inputs;
+                }
+                const int visible_count = std::min(std::max(last_connected + 2, 1), total_inputs);
+                int drawn = 0;
+                for (const auto& port : descriptor->ports) {
+                    if (port.direction != pluginsystem::PortDirection::input) continue;
+                    if (drawn >= visible_count) break;
+                    ++drawn;
+                    const auto id = pin_id(node.node_id, port.id, false);
+                    pin_refs_[id] = PinRef{node.node_id, port.id, false};
+                    ImNodes::BeginInputAttribute(id);
+                    // Show the connected source port name instead of the generic input id
+                    std::string label = port.id;
+                    for (const auto& edge : graph_.edges) {
+                        if (edge.target_node_id != node.node_id || edge.target_port_id != port.id) continue;
+                        for (const auto& src_node : graph_.nodes) {
+                            if (src_node.node_id != edge.source_node_id) continue;
+                            const auto* src_desc = node_editor::find_descriptor(descriptors_, src_node.plugin_id);
+                            if (src_desc) {
+                                for (const auto& src_port : src_desc->ports) {
+                                    if (src_port.id == edge.source_port_id && !src_port.name.empty()) {
+                                        label = src_port.name;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        break;
+                    }
+                    ImGui::Text("%s", label.c_str());
+                    ImNodes::EndInputAttribute();
+                }
+            } else {
+                for (const auto& port : descriptor->ports) {
+                    if (port.direction != pluginsystem::PortDirection::input) {
+                        continue;
+                    }
+                    const auto id = pin_id(node.node_id, port.id, false);
+                    pin_refs_[id] = PinRef{node.node_id, port.id, false};
+                    ImNodes::BeginInputAttribute(id);
+                    ImGui::Text("%s", port.id.c_str());
+                    ImNodes::EndInputAttribute();
+                }
             }
 
             for (const auto& port : descriptor->ports) {
@@ -333,8 +441,14 @@ void NodeEditorApp::draw_canvas()
                 pin_refs_[id] = PinRef{node.node_id, port.id, true};
                 ImNodes::BeginOutputAttribute(id);
                 ImGui::Indent(50.0F);
-                ImGui::Text("%s", port.id.c_str());
+                const auto& label = port.name.empty() ? port.id : port.name;
+                ImGui::Text("%s", label.c_str());
                 ImNodes::EndOutputAttribute();
+            }
+
+            // Nodes with no ports need at least one content item to avoid imgui layout assertion
+            if (descriptor->ports.empty()) {
+                ImGui::TextDisabled("Set InputPath to configure");
             }
         }
 
@@ -360,6 +474,50 @@ void NodeEditorApp::draw_canvas()
 
     ImNodes::MiniMap();
     ImNodes::EndNodeEditor();
+
+    // Del key: delete selected links and/or selected nodes
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !ImGui::IsAnyItemActive()) {
+        const int n_links = ImNodes::NumSelectedLinks();
+        if (n_links > 0) {
+            std::vector<int> sel(n_links);
+            ImNodes::GetSelectedLinks(sel.data());
+            graph_.edges.erase(
+                std::remove_if(graph_.edges.begin(), graph_.edges.end(), [&](const auto& e) {
+                    return std::find(sel.begin(), sel.end(), e.ui_id) != sel.end();
+                }),
+                graph_.edges.end()
+            );
+            dirty_ = true;
+            refresh_validation();
+        }
+
+        const int n_nodes = ImNodes::NumSelectedNodes();
+        if (n_nodes > 0) {
+            std::vector<int> sel(n_nodes);
+            ImNodes::GetSelectedNodes(sel.data());
+            std::unordered_set<std::string> removed_ids;
+            graph_.nodes.erase(
+                std::remove_if(graph_.nodes.begin(), graph_.nodes.end(), [&](const auto& n) {
+                    if (std::find(sel.begin(), sel.end(), n.ui_id) != sel.end()) {
+                        positioned_node_ids_.erase(n.ui_id);
+                        removed_ids.insert(n.node_id);
+                        return true;
+                    }
+                    return false;
+                }),
+                graph_.nodes.end()
+            );
+            graph_.edges.erase(
+                std::remove_if(graph_.edges.begin(), graph_.edges.end(), [&](const auto& e) {
+                    return removed_ids.count(e.source_node_id) || removed_ids.count(e.target_node_id);
+                }),
+                graph_.edges.end()
+            );
+            if (removed_ids.count(selected_node_id_)) selected_node_id_.clear();
+            dirty_ = true;
+            refresh_validation();
+        }
+    }
 
     handle_link_creation();
     handle_link_deletion();
@@ -450,6 +608,17 @@ void NodeEditorApp::draw_inspector()
                 } else {
                     ImGui::InputScalar(property.id.c_str(), ImGuiDataType_S64, &value);
                 }
+            } else if (property.type_name.rfind("char[", 0) == 0 && property.byte_size > 0) {
+                auto& value = node->string_properties[property.id];
+                if (input_text_string(property.id.c_str(), value)) {
+                    dirty_ = true;
+                    if (property.id == "InputPath" &&
+                        node->plugin_id.rfind("pluginsystem.builtin.replay", 0) == 0) {
+                        try_update_replay_v2_node(*node);
+                        ImGui::End();
+                        return; // descriptor is stale; descriptors_ was rebuilt inside the call
+                    }
+                }
             } else {
                 ImGui::TextDisabled(
                     "%s: %s (%llu bytes)",
@@ -531,6 +700,8 @@ void NodeEditorApp::add_node(const pluginsystem::PluginDescriptor& descriptor)
         } else if (is_integer_type(property.type_name)) {
             node.int_properties[property.id] =
                 property.default_value ? static_cast<std::int64_t>(*property.default_value) : 0;
+        } else if (property.type_name.rfind("char[", 0) == 0) {
+            node.string_properties[property.id] = "";
         }
     }
     selected_node_id_ = node.node_id;

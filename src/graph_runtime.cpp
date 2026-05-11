@@ -365,6 +365,7 @@ void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config){
 
     std::unordered_map<std::string, std::shared_ptr<SharedMemoryChannel>> output_channels;
     output_channels.reserve(nodes_.size());
+    std::unordered_map<std::string, PortDescriptor> output_port_descriptors;
     std::set<std::string> shared_memory_names;
 
     for (const auto& node : nodes_) {
@@ -377,17 +378,19 @@ void GraphRuntime::compile(PluginRegistry& registry, GraphConfig config){
             if (!shared_memory_names.insert(name).second) {
                 throw PluginError{"Duplicate generated graph shared memory name: " + name};
             }
+            const auto key = port_key(node.config.node_id, port.id);
             output_channels.emplace(
-                port_key(node.config.node_id, port.id),
+                key,
                 use_shared_memory_
                     ? SharedMemoryChannel::create(std::move(name), port.byte_size)
                     : SharedMemoryChannel::create_local(std::move(name), port.byte_size)
             );
+            output_port_descriptors.emplace(key, port);
         }
     }
 
     for (auto& node : nodes_) {
-        auto bindings = create_bindings_for_node(config, node, output_channels, input_sources);
+        auto bindings = create_bindings_for_node(config, node, output_channels, input_sources, output_port_descriptors);
 
         PluginInstanceConfig instance_config;
         instance_config.blueprint_name = config.blueprint_name;
@@ -405,7 +408,8 @@ RuntimeBindings GraphRuntime::create_bindings_for_node(
     const GraphConfig& config,
     const CompiledNode& node,
     const std::unordered_map<std::string, std::shared_ptr<SharedMemoryChannel>>& output_channels,
-    const std::unordered_map<std::string, std::string>& input_sources
+    const std::unordered_map<std::string, std::string>& input_sources,
+    const std::unordered_map<std::string, PortDescriptor>& output_port_descriptors
 )
 {
     RuntimeBindings bindings;
@@ -413,6 +417,7 @@ RuntimeBindings GraphRuntime::create_bindings_for_node(
 
     for (const auto& port : node.descriptor.ports) {
         std::shared_ptr<SharedMemoryChannel> channel;
+        PortDescriptor effective_port = port;
         const auto key = port_key(node.config.node_id, port.id);
         if (port.direction == PortDirection::output) {
             const auto found = output_channels.find(key);
@@ -428,16 +433,25 @@ RuntimeBindings GraphRuntime::create_bindings_for_node(
                     throw PluginError{"Graph connected source channel was not created: " + source->second};
                 }
                 channel = found->second;
+                if (port.any_type) {
+                    const auto src_desc = output_port_descriptors.find(source->second);
+                    if (src_desc != output_port_descriptors.end()) {
+                        effective_port.byte_size   = src_desc->second.byte_size;
+                        effective_port.type_name   = src_desc->second.type_name;
+                        effective_port.access_mode = src_desc->second.access_mode;
+                        effective_port.name        = src_desc->second.name;
+                    }
+                }
             } else {
                 auto name = make_shared_memory_name(config.blueprint_name, node.config.instance_name, member_name(port), "input");
                 channel = use_shared_memory_
-                    ? SharedMemoryChannel::create(std::move(name), port.byte_size)
-                    : SharedMemoryChannel::create_local(std::move(name), port.byte_size);
+                    ? SharedMemoryChannel::create(std::move(name), port.byte_size > 0 ? port.byte_size : 1)
+                    : SharedMemoryChannel::create_local(std::move(name), port.byte_size > 0 ? port.byte_size : 1);
             }
         }
 
         bindings.ports.push_back(PortRuntimeBinding{
-            port,
+            effective_port,
             std::move(channel),
         });
     }
@@ -476,14 +490,16 @@ void GraphRuntime::validate_edges(
         if (target_port.direction != PortDirection::input) {
             throw PluginError{"Graph edge target port is not an input: " + edge.target_port_id};
         }
-        if (source_port.type_name != target_port.type_name) {
-            throw PluginError{"Graph edge port type mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
-        }
-        if (source_port.byte_size != target_port.byte_size) {
-            throw PluginError{"Graph edge port size mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
-        }
-        if (source_port.access_mode != target_port.access_mode) {
-            throw PluginError{"Graph edge port access-mode mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
+        if (!target_port.any_type) {
+            if (source_port.type_name != target_port.type_name) {
+                throw PluginError{"Graph edge port type mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
+            }
+            if (source_port.byte_size != target_port.byte_size) {
+                throw PluginError{"Graph edge port size mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
+            }
+            if (source_port.access_mode != target_port.access_mode) {
+                throw PluginError{"Graph edge port access-mode mismatch: " + edge.source_port_id + " -> " + edge.target_port_id};
+            }
         }
 
         const auto target_key = port_key(edge.target_node_id, edge.target_port_id);

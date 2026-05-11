@@ -4,6 +4,7 @@
 #include <pluginsystem/graph.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <thread>
 #include <deque>
 #include <fstream>
@@ -103,6 +104,14 @@ EditorGraph load_editor_graph(const std::filesystem::path& path)
             }
         }
 
+        if (item.contains("string_properties") && item["string_properties"].is_object()) {
+            for (const auto& property : item["string_properties"].items()) {
+                if (property.value().is_string()) {
+                    node.string_properties[property.key()] = property.value().get<std::string>();
+                }
+            }
+        }
+
         graph.next_node_ui_id = std::max(graph.next_node_ui_id, node.ui_id + 1);
         graph.nodes.push_back(std::move(node));
     }
@@ -155,6 +164,10 @@ void save_editor_graph(const std::filesystem::path& path, const EditorGraph& gra
         item["bool_properties"] = json::object();
         for (const auto& property : node.bool_properties) {
             item["bool_properties"][property.first] = property.second;
+        }
+        item["string_properties"] = json::object();
+        for (const auto& property : node.string_properties) {
+            item["string_properties"][property.first] = property.second;
         }
         data["nodes"].push_back(std::move(item));
     }
@@ -260,14 +273,16 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
         if (target_port->direction != PortDirection::input) {
             errors.push_back("Edge target is not an input port: " + edge.target_node_id + "." + edge.target_port_id);
         }
-        if (source_port->type_name != target_port->type_name) {
-            errors.push_back("Port type mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
-        }
-        if (source_port->byte_size != target_port->byte_size) {
-            errors.push_back("Port byte-size mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
-        }
-        if (source_port->access_mode != target_port->access_mode) {
-            errors.push_back("Port access-mode mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
+        if (!target_port->any_type) {
+            if (source_port->type_name != target_port->type_name) {
+                errors.push_back("Port type mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
+            }
+            if (source_port->byte_size != target_port->byte_size) {
+                errors.push_back("Port byte-size mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
+            }
+            if (source_port->access_mode != target_port->access_mode) {
+                errors.push_back("Port access-mode mismatch: " + edge.source_node_id + "." + edge.source_port_id + " -> " + edge.target_node_id + "." + edge.target_port_id);
+            }
         }
 
         const auto target_key = port_key(edge.target_node_id, edge.target_port_id);
@@ -404,6 +419,14 @@ void apply_node_properties(pluginsystem::GraphRuntime& runtime, const EditorGrap
                 if (it != node.bool_properties.end()) {
                     const bool value = it->second;
                     props.write(property.id, &value, sizeof(value));
+                }
+            } else if (property.type_name.rfind("char[", 0) == 0 && property.byte_size > 0) {
+                const auto it = node.string_properties.find(property.id);
+                if (it != node.string_properties.end()) {
+                    std::vector<char> buffer(static_cast<std::size_t>(property.byte_size), '\0');
+                    const auto len = std::min(it->second.size(), buffer.size() - 1);
+                    std::memcpy(buffer.data(), it->second.c_str(), len);
+                    props.write(property.id, buffer.data(), property.byte_size);
                 }
             } else if (property.type_name == "float" && property.byte_size == sizeof(float)) {
                 const auto it = node.float_properties.find(property.id);

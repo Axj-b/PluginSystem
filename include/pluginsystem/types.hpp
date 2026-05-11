@@ -60,6 +60,7 @@ struct PortDescriptor {
     std::uint64_t byte_size{0};
     std::uint64_t alignment{alignof(std::max_align_t)};
     std::string type_name;
+    bool any_type{false}; // skip type/size/mode validation; adopt connected output's properties at runtime
 };
 
 struct PropertyDescriptor {
@@ -95,6 +96,7 @@ struct PluginDescriptor {
     std::vector<PortDescriptor> ports;
     std::vector<PropertyDescriptor> properties;
     std::uint64_t raw_property_block_size{0};
+    bool expandable_inputs{false}; // node editor shows dynamic visible input count
 };
 
 struct PluginInstanceConfig {

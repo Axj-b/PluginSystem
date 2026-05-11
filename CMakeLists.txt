@@ -66,6 +66,7 @@ target_link_libraries(pluginsystem_plugin_sdk INTERFACE PluginSystem::pluginsyst
 
 add_library(pluginsystem_host_sdk STATIC
     examples/host_sdk/dll_plugin_provider.cpp
+    examples/host_sdk/recorder_plugins.cpp
 )
 target_include_directories(pluginsystem_host_sdk
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/examples/host_sdk>
