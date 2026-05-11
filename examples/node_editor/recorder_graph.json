@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "blueprint_name": "NodeEditorRecorderSmoke",
+  "runtime_directory": "pluginsystem_runtime",
+  "plugin_libraries": [],
+  "nodes": [
+    {
+      "ui_id": 1,
+      "id": "producer",
+      "plugin_id": "example.pipeline.producer",
+      "instance_name": "ProducerRecorderSmoke",
+      "process_entrypoint": "Process",
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "position": [40.0, 80.0],
+      "properties": {
+        "StartValue": 10.0,
+        "Step": 1.5
+      },
+      "int_properties": {
+        "IdOffset": 0
+      },
+      "bool_properties": {},
+      "string_properties": {}
+    },
+    {
+      "ui_id": 2,
+      "id": "recorder",
+      "plugin_id": "pluginsystem.builtin.recorder",
+      "instance_name": "RecorderSmoke",
+      "process_entrypoint": "Process",
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "position": [360.0, 80.0],
+      "properties": {},
+      "int_properties": {
+        "AppendMode": 0
+      },
+      "bool_properties": {},
+      "string_properties": {
+        "OutputPath": "node_editor_headless_recorder.rec"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "ui_id": 1,
+      "source_node_id": "producer",
+      "source_port_id": "Frame",
+      "target_node_id": "recorder",
+      "target_port_id": "Input0"
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 #include "../PipelineSamples.h"
 
 #include <dll_plugin_provider.hpp>
+#include <recorder_plugins.hpp>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -77,6 +78,7 @@ std::unique_ptr<pluginsystem::PluginRegistry> make_registry(const std::vector<st
     for (const auto& library : libraries) {
         registry->add_provider(std::make_unique<pluginsystem::DllPluginProvider>(library));
     }
+    pluginsystem::builtins::register_default_plugins(*registry);
     return registry;
 }
 
@@ -146,6 +148,7 @@ int run_headless(const CliOptions& options)
     auto graph = node_editor::load_editor_graph(*options.graph_path);
     graph.plugin_libraries = node_editor::merge_plugin_libraries(graph.plugin_libraries, options.plugin_libraries);
     auto registry = make_registry(graph.plugin_libraries);
+    node_editor::prepare_replay_plugins_for_graph(*registry, graph);
     auto descriptors = node_editor::make_descriptor_index(registry->discover_plugins());
 
     const auto summaries = run_graph_once(*registry, graph, descriptors);
@@ -185,7 +188,13 @@ int run_gui(CliOptions options)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    NodeEditorApp app{std::move(options.plugin_libraries), options.graph_path};
+    node_editor::NodeEditorConfig editor_config;
+    editor_config.plugin_libraries = std::move(options.plugin_libraries);
+    editor_config.initial_graph_path = options.graph_path;
+    if (options.graph_path) {
+        editor_config.default_graph_path = *options.graph_path;
+    }
+    node_editor::NodeEditorWidget editor{std::move(editor_config)};
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -194,7 +203,19 @@ int run_gui(CliOptions options)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        app.draw();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+        ImGui::Begin(
+            "PluginSystem Node Editor",
+            nullptr,
+            ImGuiWindowFlags_NoMove
+                | ImGuiWindowFlags_NoResize
+                | ImGuiWindowFlags_NoCollapse
+                | ImGuiWindowFlags_NoBringToFrontOnFocus
+        );
+        editor.OnImGuiRender();
+        ImGui::End();
 
         ImGui::Render();
         int display_width = 0;

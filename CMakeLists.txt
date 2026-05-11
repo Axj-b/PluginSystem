@@ -103,7 +103,7 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     )
     FetchContent_MakeAvailable(glfw nlohmann_json imgui)
 
-    set(PLUGINSYSTEM_IMNODES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rd-party/imnodes")
+    set(PLUGINSYSTEM_IMNODES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/3rd-party/imnodes")
     if(NOT EXISTS "${PLUGINSYSTEM_IMNODES_SOURCE_DIR}/imnodes.cpp")
         message(FATAL_ERROR "Vendored imnodes source not found at ${PLUGINSYSTEM_IMNODES_SOURCE_DIR}")
     endif()
@@ -186,6 +186,13 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
         examples/node_editor/node_editor_app.cpp
     )
     target_link_libraries(node_editor_app PRIVATE pluginsystem_node_editor)
+
+    if(PLUGINSYSTEM_BUILD_TESTS)
+        add_executable(node_editor_widget_smoke
+            tests/node_editor_widget_smoke.cpp
+        )
+        target_link_libraries(node_editor_widget_smoke PRIVATE pluginsystem_node_editor)
+    endif()
 endif()
 
 if(PLUGINSYSTEM_BUILD_TESTS)
@@ -225,6 +232,10 @@ endif()
 
 if(PLUGINSYSTEM_BUILD_EXAMPLES AND PLUGINSYSTEM_BUILD_TESTS)
     add_test(
+        NAME node_editor_widget_smoke
+        COMMAND node_editor_widget_smoke
+    )
+    add_test(
         NAME graph_pipeline_app
         COMMAND graph_pipeline_app
             "$<TARGET_FILE:pipeline_producer_plugin>"
@@ -240,6 +251,27 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES AND PLUGINSYSTEM_BUILD_TESTS)
             "$<TARGET_FILE:pipeline_producer_plugin>"
             "$<TARGET_FILE:pipeline_processor_plugin>"
             "$<TARGET_FILE:pipeline_presenter_plugin>"
+    )
+    add_test(
+        NAME node_editor_headless_recorder
+        COMMAND node_editor_app
+            --headless-run
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/recorder_graph.json"
+            "$<TARGET_FILE:pipeline_producer_plugin>"
+    )
+    set_tests_properties(node_editor_headless_recorder PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(
+        NAME node_editor_headless_replay
+        COMMAND node_editor_app
+            --headless-run
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/node_editor/replay_graph.json"
+            "$<TARGET_FILE:pipeline_presenter_plugin>"
+    )
+    set_tests_properties(node_editor_headless_replay PROPERTIES
+        DEPENDS node_editor_headless_recorder
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 endif()
 

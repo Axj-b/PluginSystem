@@ -9,6 +9,9 @@
 #include <vector>
 
 namespace pluginsystem {
+
+class PluginRegistry;
+
 namespace builtins {
 
 struct RecordedPortInfo {
@@ -51,6 +54,11 @@ BuiltinPluginDefinition make_replay(
     std::string plugin_id,
     std::vector<RecordedPortInfo> port_infos
 );
+
+// Registers the default host-side built-ins once:
+// - pluginsystem.builtin.recorder
+// - pluginsystem.builtin.replay
+void register_default_plugins(PluginRegistry& registry);
 
 // Reads port info from a .rec file header.
 // Returns an empty vector if the file does not exist or is not a valid recording.

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "blueprint_name": "NodeEditorReplaySmoke",
+  "runtime_directory": "pluginsystem_runtime",
+  "plugin_libraries": [],
+  "nodes": [
+    {
+      "ui_id": 1,
+      "id": "replay",
+      "plugin_id": "pluginsystem.builtin.replay",
+      "instance_name": "ReplaySmoke",
+      "process_entrypoint": "Process",
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "position": [40.0, 80.0],
+      "properties": {},
+      "int_properties": {
+        "Loop": 0
+      },
+      "bool_properties": {},
+      "string_properties": {
+        "InputPath": "node_editor_headless_recorder.rec"
+      }
+    },
+    {
+      "ui_id": 2,
+      "id": "presenter",
+      "plugin_id": "example.pipeline.presenter",
+      "instance_name": "PresenterReplaySmoke",
+      "process_entrypoint": "Process",
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "position": [360.0, 80.0],
+      "properties": {
+        "AlertMultiplier": 1.5,
+        "WarningThreshold": 30.0
+      },
+      "int_properties": {
+        "DisplayCount": 100,
+        "HistoryLength": 1000,
+        "PrecisionDigits": 2,
+        "Verbosity": 1
+      },
+      "bool_properties": {
+        "ColorCoding": true
+      },
+      "string_properties": {}
+    }
+  ],
+  "edges": [
+    {
+      "ui_id": 1,
+      "source_node_id": "replay",
+      "source_port_id": "Output0",
+      "target_node_id": "presenter",
+      "target_port_id": "FrameIn"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -56,6 +57,11 @@ void save_editor_graph(const std::filesystem::path& path, const EditorGraph& gra
 DescriptorIndex make_descriptor_index(std::vector<PluginDescriptor> descriptors);
 std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const DescriptorIndex& descriptors);
 GraphConfig make_graph_config(const EditorGraph& graph);
+std::optional<std::string> register_replay_plugin_for_path(
+    PluginRegistry& registry,
+    const std::string& recording_path
+);
+std::size_t prepare_replay_plugins_for_graph(PluginRegistry& registry, EditorGraph& graph);
 
 const PluginDescriptor* find_descriptor(const DescriptorIndex& descriptors, std::string_view plugin_id);
 const PortDescriptor* find_port(const PluginDescriptor& descriptor, std::string_view port_id);

@@ -1,15 +1,20 @@
 #include "editor_model.hpp"
 
+#include <recorder_plugins.hpp>
+
 #include <nlohmann/json.hpp>
 #include <pluginsystem/graph.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <thread>
 #include <deque>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace pluginsystem::examples::node_editor {
@@ -26,6 +31,52 @@ bool has_entrypoint(const PluginDescriptor& descriptor, std::string_view entrypo
 {
     return std::any_of(descriptor.entrypoints.begin(), descriptor.entrypoints.end(), [entrypoint_id](const auto& entrypoint) {
         return entrypoint.id == entrypoint_id;
+    });
+}
+
+bool is_replay_plugin_id(std::string_view plugin_id)
+{
+    constexpr std::string_view replay_prefix = "pluginsystem.builtin.replay";
+    return plugin_id == replay_prefix
+        || (plugin_id.size() > replay_prefix.size()
+            && plugin_id.substr(0, replay_prefix.size()) == replay_prefix
+            && plugin_id[replay_prefix.size()] == '.');
+}
+
+std::string sanitize_replay_id_part(std::string_view value)
+{
+    std::string result;
+    result.reserve(value.size());
+    for (const auto character : value) {
+        const auto byte = static_cast<unsigned char>(character);
+        result.push_back(std::isalnum(byte) || character == '_' ? character : '_');
+    }
+    return result.empty() ? "unnamed" : result;
+}
+
+std::string replay_plugin_id_for_ports(const std::vector<pluginsystem::builtins::RecordedPortInfo>& port_infos)
+{
+    std::string plugin_id = "pluginsystem.builtin.replay." + std::to_string(port_infos.size());
+    for (const auto& info : port_infos) {
+        plugin_id += "." + std::to_string(info.byte_size);
+    }
+    for (const auto& info : port_infos) {
+        plugin_id += "." + sanitize_replay_id_part(info.type_name);
+    }
+    for (const auto& info : port_infos) {
+        plugin_id += "." + sanitize_replay_id_part(info.port_name);
+    }
+    for (const auto& info : port_infos) {
+        plugin_id += info.access_mode == PortAccessMode::buffered_latest ? ".latest" : ".direct";
+    }
+    return plugin_id;
+}
+
+bool registry_contains_plugin(PluginRegistry& registry, std::string_view plugin_id)
+{
+    const auto descriptors = registry.discover_plugins();
+    return std::any_of(descriptors.begin(), descriptors.end(), [plugin_id](const auto& descriptor) {
+        return descriptor.id == plugin_id;
     });
 }
 
@@ -198,6 +249,74 @@ DescriptorIndex make_descriptor_index(std::vector<PluginDescriptor> descriptors)
         index.by_plugin_id[index.descriptors[descriptor_index].id] = descriptor_index;
     }
     return index;
+}
+
+std::optional<std::string> register_replay_plugin_for_path(
+    PluginRegistry& registry,
+    const std::string& recording_path
+)
+{
+    const auto port_infos = pluginsystem::builtins::read_recording_ports(recording_path);
+    if (port_infos.empty()) {
+        return std::nullopt;
+    }
+
+    const auto plugin_id = replay_plugin_id_for_ports(port_infos);
+    if (!registry_contains_plugin(registry, plugin_id)) {
+        registry.register_builtin(pluginsystem::builtins::make_replay(plugin_id, port_infos));
+    }
+    return plugin_id;
+}
+
+std::size_t prepare_replay_plugins_for_graph(PluginRegistry& registry, EditorGraph& graph)
+{
+    std::unordered_set<std::string> replay_nodes_to_check;
+    std::size_t registered_or_updated = 0;
+
+    for (auto& node : graph.nodes) {
+        if (!is_replay_plugin_id(node.plugin_id)) {
+            continue;
+        }
+        const auto input_path = node.string_properties.find("InputPath");
+        if (input_path == node.string_properties.end() || input_path->second.empty()) {
+            continue;
+        }
+
+        auto replay_plugin_id = register_replay_plugin_for_path(registry, input_path->second);
+        if (!replay_plugin_id) {
+            continue;
+        }
+
+        if (node.plugin_id != *replay_plugin_id) {
+            node.plugin_id = *replay_plugin_id;
+            ++registered_or_updated;
+        }
+        replay_nodes_to_check.insert(node.node_id);
+    }
+
+    if (!replay_nodes_to_check.empty()) {
+        const auto descriptors = make_descriptor_index(registry.discover_plugins());
+        graph.edges.erase(
+            std::remove_if(graph.edges.begin(), graph.edges.end(), [&](const auto& edge) {
+                if (replay_nodes_to_check.find(edge.source_node_id) == replay_nodes_to_check.end()) {
+                    return false;
+                }
+                const auto* node = find_node(graph, edge.source_node_id);
+                if (node == nullptr) {
+                    return true;
+                }
+                const auto* descriptor = find_descriptor(descriptors, node->plugin_id);
+                if (descriptor == nullptr) {
+                    return true;
+                }
+                const auto* port = find_port(*descriptor, edge.source_port_id);
+                return port == nullptr || port->direction != PortDirection::output;
+            }),
+            graph.edges.end()
+        );
+    }
+
+    return registered_or_updated;
 }
 
 std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const DescriptorIndex& descriptors)

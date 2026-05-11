@@ -3,7 +3,9 @@
 #include <pluginsystem/error.hpp>
 #include <pluginsystem/instance.hpp>
 #include <pluginsystem/plugin_api.h>
+#include <pluginsystem/registry.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -27,11 +29,13 @@ constexpr std::uint32_t k_max_recorder_ports = 32u;
 //    uint32  magic       = 0x52454350
 //    uint32  version     = 2
 //    uint32  num_ports
-//    uint32  data_offset = 16 + num_ports * 72
+//    uint32  data_offset = 16 + num_ports * 140
 //
-//  PortSlot × num_ports  (72 bytes each):
+//  PortSlot × num_ports  (140 bytes each):
 //    char[64]  type_name
 //    uint64    byte_size
+//    char[64]  port_name
+//    uint32    access_mode_raw
 //
 //  Frame × N  (24 + byte_size[port_index] bytes, repeating):
 //    uint64  timestamp_ns
@@ -72,6 +76,14 @@ std::uint64_t steady_clock_ns()
             std::chrono::steady_clock::now().time_since_epoch()
         ).count()
     );
+}
+
+bool registry_contains_plugin(PluginRegistry& registry, std::string_view plugin_id)
+{
+    const auto descriptors = registry.discover_plugins();
+    return std::any_of(descriptors.begin(), descriptors.end(), [plugin_id](const auto& descriptor) {
+        return descriptor.id == plugin_id;
+    });
 }
 
 PortDescriptor make_any_input_port(std::uint32_t index)
@@ -433,6 +445,16 @@ BuiltinPluginDefinition make_replay(
     };
 
     return definition;
+}
+
+void register_default_plugins(PluginRegistry& registry)
+{
+    if (!registry_contains_plugin(registry, "pluginsystem.builtin.recorder")) {
+        registry.register_builtin(make_recorder());
+    }
+    if (!registry_contains_plugin(registry, "pluginsystem.builtin.replay")) {
+        registry.register_builtin(make_replay("pluginsystem.builtin.replay", {}));
+    }
 }
 
 // ─── read_recording_ports ─────────────────────────────────────────────────────

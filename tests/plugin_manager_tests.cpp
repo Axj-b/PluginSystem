@@ -1,11 +1,14 @@
 #include <pluginsystem/plugin_manager.hpp>
 #include <dll_plugin_provider.hpp>
+#include <recorder_plugins.hpp>
 
 #include <atomic>
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstring>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -234,6 +237,14 @@ void expect_graph_error(const std::function<void()>& action)
     assert(failed);
 }
 
+void write_string_property(pluginsystem::SharedPropertyBlock& properties, std::string_view property_id, const std::string& value)
+{
+    char buffer[256]{};
+    const auto size = std::min(value.size(), sizeof(buffer) - 1);
+    std::memcpy(buffer, value.data(), size);
+    properties.write(property_id, buffer, sizeof(buffer));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -256,6 +267,7 @@ int main(int argc, char** argv)
     registry.register_builtin(make_graph_stage_builtin("test.graph.type_mismatch", 1, pluginsystem::PortAccessMode::buffered_latest, pluginsystem::PortAccessMode::buffered_latest, "test.Other", "test.Other"));
     registry.register_builtin(make_graph_stage_builtin("test.graph.size_mismatch", 1, pluginsystem::PortAccessMode::buffered_latest, pluginsystem::PortAccessMode::buffered_latest, "test.Sample", "test.Sample", sizeof(Sample) + 4, sizeof(Sample) + 4));
     registry.register_builtin(make_graph_stage_builtin("test.graph.access_mismatch", 1, pluginsystem::PortAccessMode::direct_block, pluginsystem::PortAccessMode::direct_block));
+    pluginsystem::builtins::register_default_plugins(registry);
 
     const auto descriptors = registry.discover_plugins();
     assert(contains_plugin(descriptors, "test.pipeline"));
@@ -263,6 +275,8 @@ int main(int argc, char** argv)
     assert(contains_plugin(descriptors, "test.builtin.increment"));
     assert(contains_plugin(descriptors, "test.builtin.serialized"));
     assert(contains_plugin(descriptors, "test.graph.add_one"));
+    assert(contains_plugin(descriptors, "pluginsystem.builtin.recorder"));
+    assert(contains_plugin(descriptors, "pluginsystem.builtin.replay"));
 
     pluginsystem::PluginInstanceConfig config;
     config.blueprint_name = "TestBlueprint";
@@ -452,6 +466,55 @@ int main(int argc, char** argv)
     fanout->port("b", "output").read(&fanout_b, sizeof(fanout_b));
     assert(fanout_a.value == 13);
     assert(fanout_b.value == 103);
+
+    const auto recording_path = std::filesystem::absolute(
+        std::filesystem::path{"pluginsystem_test_runtime"} / "recorder_roundtrip.rec"
+    );
+    std::filesystem::create_directories(recording_path.parent_path());
+    std::filesystem::remove(recording_path);
+
+    pluginsystem::GraphConfig recorder_config;
+    recorder_config.blueprint_name = "GraphRecorderRoundtrip";
+    recorder_config.runtime_directory = "pluginsystem_test_runtime";
+    recorder_config.worker_count = 1;
+    recorder_config.nodes.push_back(pluginsystem::GraphNodeConfig{"source", "test.graph.add_one", "RecorderSource"});
+    recorder_config.nodes.push_back(pluginsystem::GraphNodeConfig{"recorder", "pluginsystem.builtin.recorder", "Recorder"});
+    recorder_config.edges.push_back(pluginsystem::GraphEdgeConfig{"source", "output", "recorder", "Input0"});
+    auto recorder_graph = registry.create_graph(recorder_config);
+    Sample recorder_input{4};
+    recorder_graph->port("source", "input").write(&recorder_input, sizeof(recorder_input));
+    write_string_property(recorder_graph->properties("recorder"), "OutputPath", recording_path.string());
+    std::int32_t append_mode = 0;
+    recorder_graph->properties("recorder").write("AppendMode", &append_mode, sizeof(append_mode));
+    const auto recorder_job = recorder_graph->submit_run();
+    assert(recorder_graph->wait(recorder_job).result == PS_OK);
+    recorder_graph->stop();
+
+    const auto recorded_ports = pluginsystem::builtins::read_recording_ports(recording_path.string());
+    assert(recorded_ports.size() == 1);
+    assert(recorded_ports[0].type_name == "test.Sample");
+    assert(recorded_ports[0].byte_size == sizeof(Sample));
+    assert(recorded_ports[0].port_name == "Output");
+    assert(recorded_ports[0].access_mode == pluginsystem::PortAccessMode::buffered_latest);
+
+    registry.register_builtin(pluginsystem::builtins::make_replay("test.replay.roundtrip", recorded_ports));
+    pluginsystem::GraphConfig replay_config;
+    replay_config.blueprint_name = "GraphReplayRoundtrip";
+    replay_config.runtime_directory = "pluginsystem_test_runtime";
+    replay_config.worker_count = 1;
+    replay_config.nodes.push_back(pluginsystem::GraphNodeConfig{"replay", "test.replay.roundtrip", "Replay"});
+    replay_config.nodes.push_back(pluginsystem::GraphNodeConfig{"consumer", "test.graph.times_ten", "ReplayConsumer"});
+    replay_config.edges.push_back(pluginsystem::GraphEdgeConfig{"replay", "Output0", "consumer", "input"});
+    auto replay_graph = registry.create_graph(replay_config);
+    write_string_property(replay_graph->properties("replay"), "InputPath", recording_path.string());
+    std::int32_t loop = 0;
+    replay_graph->properties("replay").write("Loop", &loop, sizeof(loop));
+    const auto replay_job = replay_graph->submit_run();
+    assert(replay_graph->wait(replay_job).result == PS_OK);
+    Sample replay_output{};
+    replay_graph->port("consumer", "output").read(&replay_output, sizeof(replay_output));
+    assert(replay_output.value == 15);
+    replay_graph->stop();
 
     auto make_invalid_graph = [](std::string blueprint_name) {
         pluginsystem::GraphConfig config;
