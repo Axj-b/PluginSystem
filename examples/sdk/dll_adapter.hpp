@@ -32,18 +32,6 @@ struct has_stop : std::false_type {};
 template <typename TPlugin>
 struct has_stop<TPlugin, void_t<decltype(std::declval<TPlugin&>().Stop())>> : std::true_type {};
 
-template <typename TPlugin, typename = void>
-struct has_render : std::false_type {};
-
-template <typename TPlugin>
-struct has_render<TPlugin, void_t<decltype(std::declval<TPlugin&>().Render(std::declval<void*>()))>> : std::true_type {};
-
-template <typename TPlugin, typename = void>
-struct has_has_render : std::false_type {};
-
-template <typename TPlugin>
-struct has_has_render<TPlugin, void_t<decltype(std::declval<const TPlugin&>().HasRender())>> : std::true_type {};
-
 template <typename TResult>
 int32_t result_to_status(TResult result)
 {
@@ -75,26 +63,6 @@ void call_stop(TPlugin& plugin)
 {
     if constexpr (has_stop<TPlugin>::value) {
         (void)plugin.Stop();
-    }
-}
-
-template <typename TPlugin>
-bool supports_render(const TPlugin& plugin)
-{
-    if constexpr (!has_render<TPlugin>::value) {
-        return false;
-    } else if constexpr (has_has_render<TPlugin>::value) {
-        return static_cast<bool>(plugin.HasRender());
-    } else {
-        return true;
-    }
-}
-
-template <typename TPlugin>
-void call_render(TPlugin& plugin, void* user_context)
-{
-    if constexpr (has_render<TPlugin>::value) {
-        plugin.Render(user_context);
     }
 }
 
@@ -147,7 +115,7 @@ public:
         constexpr std::uint32_t kRenderFieldEnd =
             static_cast<std::uint32_t>(offsetof(ps_plugin_instance, render) + sizeof(ps_plugin_instance::render));
         if (host_struct_size >= kRenderFieldEnd) {
-            out_instance->render = detail::supports_render(*static_cast<Instance*>(out_instance->instance)->plugin)
+            out_instance->render = static_cast<Instance*>(out_instance->instance)->plugin->HasRender()
                 ? &render_fn : nullptr;
         }
 
@@ -295,7 +263,7 @@ private:
 
     static void render_fn(void* instance, void* user_context)
     {
-        detail::call_render(*static_cast<Instance*>(instance)->plugin, user_context);
+        static_cast<Instance*>(instance)->plugin->Render(user_context);
     }
 
     static void destroy(void* instance)
