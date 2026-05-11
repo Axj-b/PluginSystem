@@ -2,6 +2,7 @@
 
 #include <dll_plugin_provider.hpp>
 #include <recorder_plugins.hpp>
+#include <recording_format.hpp>
 
 #include <imgui.h>
 #include <imnodes.h>
@@ -961,9 +962,27 @@ void node_editor::NodeEditorWidget::draw_timeline()
     }
 
     ImGui::InvisibleButton("TimelineCanvas", size);
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && is_recorder && runtime_) {
-        add_recording_marker();
-        RefreshTimeline();
+    const bool can_add_marker_by_click = (is_recorder || is_replay) && !timeline_path_.empty() && timeline_.duration_ns > 0;
+    if (ImGui::IsItemHovered() && can_add_marker_by_click) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const float mouse_x = ImGui::GetIO().MousePos.x;
+        const float track_width = std::max(1.0F, size.x - label_width - 8.0F);
+        const float t = std::clamp((mouse_x - origin.x - label_width) / track_width, 0.0F, 1.0F);
+        const auto hovered_ts = timeline_.first_timestamp_ns + static_cast<std::uint64_t>(t * static_cast<double>(timeline_.duration_ns));
+        ImGui::SetTooltip("Click to add marker \"%s\" at %s", marker_label_text_.c_str(), format_time_seconds(hovered_ts - timeline_.first_timestamp_ns).c_str());
+    }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        if (is_recorder && runtime_) {
+            add_recording_marker();
+            RefreshTimeline();
+        } else if (can_add_marker_by_click) {
+            const float mouse_x = ImGui::GetIO().MousePos.x;
+            const float track_width = std::max(1.0F, size.x - label_width - 8.0F);
+            const float t = std::clamp((mouse_x - origin.x - label_width) / track_width, 0.0F, 1.0F);
+            const auto clicked_ts = timeline_.first_timestamp_ns + static_cast<std::uint64_t>(t * static_cast<double>(timeline_.duration_ns));
+            add_marker_at_timestamp(clicked_ts);
+            RefreshTimeline();
+        }
     }
 
     if (!timeline_.markers.empty()) {
@@ -1427,6 +1446,34 @@ void node_editor::NodeEditorWidget::add_recording_marker()
     } else {
         log(NodeEditorMessageLevel::warning, "Recorder marker entrypoint failed.");
     }
+}
+
+void node_editor::NodeEditorWidget::add_marker_at_timestamp(std::uint64_t timestamp_ns)
+{
+    if (timeline_path_.empty()) {
+        return;
+    }
+
+    std::uint32_t next_marker_id = 1;
+    for (const auto& marker : timeline_.markers) {
+        if (marker.marker_id >= next_marker_id) {
+            next_marker_id = marker.marker_id + 1;
+        }
+    }
+
+    pluginsystem::builtins::detail::RecordingWriter writer;
+    if (!writer.open(timeline_path_, {}, true)) {
+        log(NodeEditorMessageLevel::warning, "Could not open recording file to add marker.");
+        return;
+    }
+
+    if (!writer.write_marker(timestamp_ns, 0, next_marker_id, marker_label_text_)) {
+        log(NodeEditorMessageLevel::warning, "Failed to write marker to recording file.");
+    } else {
+        const auto relative_ns = timestamp_ns > timeline_.first_timestamp_ns ? timestamp_ns - timeline_.first_timestamp_ns : 0;
+        log(NodeEditorMessageLevel::info, "Added marker \"" + marker_label_text_ + "\" at " + format_time_seconds(relative_ns) + ".");
+    }
+    writer.close();
 }
 
 bool node_editor::NodeEditorWidget::selected_timeline_node_is_recorder() const

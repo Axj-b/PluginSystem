@@ -138,12 +138,28 @@ BuiltinPluginDefinition make_recorder(std::string plugin_id)
             if (binding.descriptor.direction != PortDirection::input || binding.descriptor.byte_size == 0) {
                 continue;
             }
+
+            // De-duplicate port_name: if the same name appears more than once, append _2, _3, …
+            std::string port_name = binding.descriptor.name;
+            if (std::any_of(state->active_ports.begin(), state->active_ports.end(), [&](const ActivePort& p) {
+                    return p.info.port_name == port_name;
+                })) {
+                int suffix = 2;
+                std::string candidate;
+                do {
+                    candidate = port_name + "_" + std::to_string(suffix++);
+                } while (std::any_of(state->active_ports.begin(), state->active_ports.end(), [&](const ActivePort& p) {
+                    return p.info.port_name == candidate;
+                }));
+                port_name = std::move(candidate);
+            }
+
             state->active_ports.push_back(ActivePort{
                 binding.descriptor.id,
                 RecordedPortInfo{
                     binding.descriptor.type_name,
                     binding.descriptor.byte_size,
-                    binding.descriptor.name,
+                    std::move(port_name),
                     binding.descriptor.access_mode,
                 },
             });

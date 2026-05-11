@@ -306,6 +306,31 @@ std::vector<RecordedPortInfo> read_recording_ports(const std::string& path)
     if (!detail::read_recording_header(file, preamble, ports)) {
         return {};
     }
+
+    // De-duplicate port names so the replay plugin's output ports are always unique.
+    // Existing recordings may have duplicates if two source nodes had the same port name.
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        const std::string base = ports[i].port_name;
+        bool duplicate = false;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (ports[j].port_name == base) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            continue;
+        }
+        int suffix = 2;
+        std::string candidate;
+        do {
+            candidate = base + "_" + std::to_string(suffix++);
+        } while (std::any_of(ports.begin(), ports.begin() + static_cast<std::ptrdiff_t>(i), [&](const RecordedPortInfo& p) {
+            return p.port_name == candidate;
+        }));
+        ports[i].port_name = std::move(candidate);
+    }
+
     return ports;
 }
 

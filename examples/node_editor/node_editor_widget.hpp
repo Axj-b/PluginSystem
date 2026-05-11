@@ -119,6 +119,7 @@ private:
     void tick_continuous_run();
     void update_timeline_source();
     void add_recording_marker();
+    void add_marker_at_timestamp(std::uint64_t timestamp_ns);
     bool selected_timeline_node_is_recorder() const;
     bool selected_timeline_node_is_replay() const;
     std::filesystem::path timeline_path_for_node(const EditorNode& node) const;
