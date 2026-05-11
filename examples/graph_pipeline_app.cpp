@@ -1,4 +1,5 @@
 #include <pluginsystem/plugin_manager.hpp>
+#include <dll_plugin_provider.hpp>
 
 #include "PipelineSamples.h"
 
@@ -58,9 +59,9 @@ int main(int argc, char** argv)
 
     try {
         pluginsystem::PluginRegistry registry;
-        registry.add_dll_plugin(argv[1]);
-        registry.add_dll_plugin(argv[2]);
-        registry.add_dll_plugin(argv[3]);
+        registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[1]));
+        registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[2]));
+        registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[3]));
 
         const auto descriptors = registry.discover_plugins();
         std::cout << "Discovered graph plugins:\n";

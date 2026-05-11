@@ -16,7 +16,6 @@ public:
     explicit PluginRegistry(PluginHost host = {});
 
     void add_provider(std::unique_ptr<PluginProvider> provider);
-    void add_dll_plugin(const std::filesystem::path& library_path);
     void register_builtin(BuiltinPluginDefinition definition);
 
     std::vector<PluginDescriptor> discover_plugins();

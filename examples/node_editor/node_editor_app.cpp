@@ -2,6 +2,8 @@
 
 #include "../PipelineSamples.h"
 
+#include <dll_plugin_provider.hpp>
+
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <GLFW/glfw3.h>
@@ -73,7 +75,7 @@ std::unique_ptr<pluginsystem::PluginRegistry> make_registry(const std::vector<st
 {
     auto registry = std::make_unique<pluginsystem::PluginRegistry>();
     for (const auto& library : libraries) {
-        registry->add_dll_plugin(library);
+        registry->add_provider(std::make_unique<pluginsystem::DllPluginProvider>(library));
     }
     return registry;
 }

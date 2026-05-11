@@ -1,4 +1,5 @@
 #include <pluginsystem/plugin_manager.hpp>
+#include <dll_plugin_provider.hpp>
 
 #include <atomic>
 #include <algorithm>
@@ -243,8 +244,8 @@ int main(int argc, char** argv)
     }
 
     pluginsystem::PluginRegistry registry;
-    registry.add_dll_plugin(argv[1]);
-    registry.add_dll_plugin(argv[3]);
+    registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[1]));
+    registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[3]));
     registry.register_builtin(make_increment_builtin());
     registry.register_builtin(make_serialized_builtin());
     auto graph_starts = std::make_shared<std::atomic<int>>(0);

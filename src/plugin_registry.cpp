@@ -25,11 +25,6 @@ void PluginRegistry::add_provider(std::unique_ptr<PluginProvider> provider)
     cache_.clear();
 }
 
-void PluginRegistry::add_dll_plugin(const std::filesystem::path& library_path)
-{
-    add_provider(std::make_unique<DllPluginProvider>(library_path));
-}
-
 void PluginRegistry::register_builtin(BuiltinPluginDefinition definition)
 {
     if (builtin_provider_ == nullptr) {

@@ -64,6 +64,15 @@ target_include_directories(pluginsystem_plugin_sdk INTERFACE
 )
 target_link_libraries(pluginsystem_plugin_sdk INTERFACE PluginSystem::pluginsystem)
 
+add_library(pluginsystem_host_sdk STATIC
+    examples/host_sdk/dll_plugin_provider.cpp
+)
+target_include_directories(pluginsystem_host_sdk
+    PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/examples/host_sdk>
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+target_link_libraries(pluginsystem_host_sdk PUBLIC PluginSystem::pluginsystem)
+
 if(PLUGINSYSTEM_BUILD_EXAMPLES)
     include(FetchContent)
     find_package(OpenGL REQUIRED)
@@ -150,13 +159,13 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     add_executable(host_app
         examples/host_app.cpp
     )
-    target_link_libraries(host_app PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(host_app PRIVATE pluginsystem_host_sdk)
     target_include_directories(host_app PRIVATE examples)
 
     add_executable(graph_pipeline_app
         examples/graph_pipeline_app.cpp
     )
-    target_link_libraries(graph_pipeline_app PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(graph_pipeline_app PRIVATE pluginsystem_host_sdk)
     target_include_directories(graph_pipeline_app PRIVATE examples)
 
     add_library(pluginsystem_node_editor STATIC
@@ -166,7 +175,7 @@ if(PLUGINSYSTEM_BUILD_EXAMPLES)
     target_include_directories(pluginsystem_node_editor PUBLIC examples/node_editor examples)
     target_link_libraries(pluginsystem_node_editor
         PUBLIC
-            PluginSystem::pluginsystem
+            pluginsystem_host_sdk
             pluginsystem_imgui
             pluginsystem_imnodes
             nlohmann_json::nlohmann_json
@@ -202,7 +211,7 @@ if(PLUGINSYSTEM_BUILD_TESTS)
     add_executable(plugin_manager_tests
         tests/plugin_manager_tests.cpp
     )
-    target_link_libraries(plugin_manager_tests PRIVATE PluginSystem::pluginsystem)
+    target_link_libraries(plugin_manager_tests PRIVATE pluginsystem_host_sdk)
 
     add_test(
         NAME plugin_manager_tests

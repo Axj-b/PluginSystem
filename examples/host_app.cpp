@@ -1,4 +1,5 @@
 #include <pluginsystem/plugin_manager.hpp>
+#include <dll_plugin_provider.hpp>
 
 #include "Samples.h"
 
@@ -163,7 +164,7 @@ int main(int argc, char** argv)
         pluginsystem::PluginRegistry registry;
 
         const auto dll_registration_start = Clock::now();
-        registry.add_dll_plugin(argv[1]);
+        registry.add_provider(std::make_unique<pluginsystem::DllPluginProvider>(argv[1]));
         const auto dll_registration_elapsed = elapsed_since(dll_registration_start);
 
         const auto builtin_registration_start = Clock::now();
