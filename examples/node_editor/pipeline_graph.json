@@ -28,6 +28,27 @@
       "target_node_id": "example_pipeline_presenter_1",
       "target_port_id": "FrameIn",
       "ui_id": 4
+    },
+    {
+      "source_node_id": "example_pipeline_processor_1",
+      "source_port_id": "FrameOut",
+      "target_node_id": "pluginsystem_builtin_recorder_1",
+      "target_port_id": "Input0",
+      "ui_id": 5
+    },
+    {
+      "source_node_id": "processor",
+      "source_port_id": "FrameOut",
+      "target_node_id": "pluginsystem_builtin_recorder_1",
+      "target_port_id": "Input1",
+      "ui_id": 6
+    },
+    {
+      "source_node_id": "producer",
+      "source_port_id": "Frame",
+      "target_node_id": "pluginsystem_builtin_recorder_1",
+      "target_port_id": "Input2",
+      "ui_id": 7
     }
   ],
   "nodes": [
@@ -40,8 +61,8 @@
       },
       "plugin_id": "example.pipeline.producer",
       "position": [
-        40.0,
-        80.0
+        19.272987365722656,
+        95.14671325683594
       ],
       "process_entrypoint": "Process",
       "properties": {
@@ -50,6 +71,7 @@
       },
       "start_entrypoint": "Start",
       "stop_entrypoint": "Stop",
+      "string_properties": {},
       "ui_id": 1
     },
     {
@@ -76,6 +98,7 @@
       },
       "start_entrypoint": "Start",
       "stop_entrypoint": "Stop",
+      "string_properties": {},
       "ui_id": 2
     },
     {
@@ -94,6 +117,7 @@
       },
       "start_entrypoint": "Start",
       "stop_entrypoint": "Stop",
+      "string_properties": {},
       "ui_id": 3
     },
     {
@@ -120,6 +144,7 @@
       },
       "start_entrypoint": "Start",
       "stop_entrypoint": "Stop",
+      "string_properties": {},
       "ui_id": 4
     },
     {
@@ -138,7 +163,30 @@
       },
       "start_entrypoint": "Start",
       "stop_entrypoint": "Start",
+      "string_properties": {},
       "ui_id": 5
+    },
+    {
+      "bool_properties": {},
+      "id": "pluginsystem_builtin_recorder_1",
+      "instance_name": "pluginsystem_builtin_recorder_1",
+      "int_properties": {
+        "AppendMode": 0
+      },
+      "plugin_id": "pluginsystem.builtin.recorder",
+      "position": [
+        659.8251342773438,
+        359.3214111328125
+      ],
+      "process_entrypoint": "Process",
+      "properties": {},
+      "start_entrypoint": "Start",
+      "stop_entrypoint": "Stop",
+      "string_properties": {
+        "MarkerLabel": "",
+        "OutputPath": "test1"
+      },
+      "ui_id": 6
     }
   ],
   "plugin_libraries": [

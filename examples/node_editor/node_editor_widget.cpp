@@ -9,9 +9,13 @@
 
 #include <array>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -93,6 +97,34 @@ bool is_integer_type(std::string_view type_name)
         || type_name == "uint32_t" || type_name == "uint64_t";
 }
 
+bool is_replay_status_property(std::string_view property_id)
+{
+    return property_id == "CurrentTimestampNs"
+        || property_id == "NextTimestampNs"
+        || property_id == "EndReached";
+}
+
+bool is_recorder_plugin_id(std::string_view plugin_id)
+{
+    return plugin_id == "pluginsystem.builtin.recorder";
+}
+
+bool is_replay_plugin_id(std::string_view plugin_id)
+{
+    constexpr std::string_view prefix = "pluginsystem.builtin.replay";
+    return plugin_id == prefix
+        || (plugin_id.size() > prefix.size()
+            && plugin_id.substr(0, prefix.size()) == prefix
+            && plugin_id[prefix.size()] == '.');
+}
+
+std::string format_time_seconds(std::uint64_t timestamp_ns)
+{
+    char buffer[64]{};
+    std::snprintf(buffer, sizeof(buffer), "%.3fs", static_cast<double>(timestamp_ns) / 1'000'000'000.0);
+    return buffer;
+}
+
 std::vector<std::string> read_output_summaries(pluginsystem::GraphRuntime& runtime, const node_editor::EditorGraph& graph, const node_editor::DescriptorIndex& descriptors)
 {
     std::vector<std::string> summaries;
@@ -170,8 +202,9 @@ void node_editor::NodeEditorWidget::OnImGuiRender()
     draw_top_bar();
 
     const auto available = ImGui::GetContentRegionAvail();
-    const float bottom_height = std::min(180.0F, std::max(110.0F, available.y * 0.24F));
-    const float main_height = std::max(220.0F, available.y - bottom_height - ImGui::GetStyle().ItemSpacing.y);
+    const float timeline_height = std::min(220.0F, std::max(135.0F, available.y * 0.24F));
+    const float bottom_height = std::min(165.0F, std::max(105.0F, available.y * 0.18F));
+    const float main_height = std::max(220.0F, available.y - timeline_height - bottom_height - 2.0F * ImGui::GetStyle().ItemSpacing.y);
 
     ImGui::BeginChild("NodeEditorMain", ImVec2{0.0F, main_height}, false);
     if (ImGui::BeginTable("NodeEditorLayout", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
@@ -193,6 +226,7 @@ void node_editor::NodeEditorWidget::OnImGuiRender()
     }
     ImGui::EndChild();
 
+    draw_timeline();
     draw_bottom_panel();
     draw_plugin_windows();
 }
@@ -262,6 +296,33 @@ void node_editor::NodeEditorWidget::StepNode()
     step_node();
 }
 
+void node_editor::NodeEditorWidget::RefreshTimeline()
+{
+    update_timeline_source();
+    timeline_ = {};
+    timeline_path_.clear();
+
+    const auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    if (node == nullptr) {
+        return;
+    }
+
+    timeline_path_ = timeline_path_for_node(*node);
+    if (timeline_path_.empty()) {
+        return;
+    }
+
+    timeline_ = pluginsystem::builtins::read_recording_timeline(timeline_path_.string());
+    if (start_marker_id_) {
+        const auto marker_exists = std::any_of(timeline_.markers.begin(), timeline_.markers.end(), [this](const auto& marker) {
+            return marker.marker_id == *start_marker_id_;
+        });
+        if (!marker_exists) {
+            start_marker_id_.reset();
+        }
+    }
+}
+
 void node_editor::NodeEditorWidget::draw_plugin_windows()
 {
     if (runtime_) {
@@ -275,6 +336,7 @@ void node_editor::NodeEditorWidget::reload_plugins()
     paused_ = false;
     continuous_job_.reset();
     continuous_run_count_ = 0;
+    last_replay_submit_time_ = {};
     stop_runtime_internal();
     graph_.plugin_libraries = node_editor::merge_plugin_libraries(graph_.plugin_libraries, configured_libraries());
     registry_ = make_registry(graph_.plugin_libraries);
@@ -449,10 +511,21 @@ void node_editor::NodeEditorWidget::draw_canvas()
         if (positioned_node_ids_.insert(node.ui_id).second) {
             ImNodes::SetNodeGridSpacePos(node.ui_id, ImVec2{node.x, node.y});
         }
+        if (!node.enabled) {
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackground, IM_COL32(42, 42, 46, 220));
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundHovered, IM_COL32(54, 54, 60, 230));
+            ImNodes::PushColorStyle(ImNodesCol_NodeBackgroundSelected, IM_COL32(64, 64, 72, 235));
+            ImNodes::PushColorStyle(ImNodesCol_NodeOutline, IM_COL32(130, 92, 80, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 150, 156, 255));
+        }
         ImNodes::BeginNode(node.ui_id);
 
         ImNodes::BeginNodeTitleBar();
-        ImGui::TextUnformatted(descriptor != nullptr ? descriptor->name.c_str() : node.plugin_id.c_str());
+        auto title = descriptor != nullptr ? descriptor->name : node.plugin_id;
+        if (!node.enabled) {
+            title += " (deactivated)";
+        }
+        ImGui::TextUnformatted(title.c_str());
         ImNodes::EndNodeTitleBar();
 
         if (descriptor == nullptr) {
@@ -536,6 +609,13 @@ void node_editor::NodeEditorWidget::draw_canvas()
         }
 
         ImNodes::EndNode();
+        if (!node.enabled) {
+            ImGui::PopStyleColor();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
+            ImNodes::PopColorStyle();
+        }
         const auto position = ImNodes::GetNodeGridSpacePos(node.ui_id);
         if (node.x != position.x || node.y != position.y) {
             node.x = position.x;
@@ -557,6 +637,37 @@ void node_editor::NodeEditorWidget::draw_canvas()
 
     ImNodes::MiniMap();
     ImNodes::EndNodeEditor();
+
+    int hovered_node_ui_id = 0;
+    if (ImNodes::IsNodeHovered(&hovered_node_ui_id) && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        context_node_id_.clear();
+        for (const auto& node : graph_.nodes) {
+            if (node.ui_id == hovered_node_ui_id) {
+                context_node_id_ = node.node_id;
+                selected_node_id_ = node.node_id;
+                ImGui::OpenPopup("Node Context");
+                break;
+            }
+        }
+    }
+    if (ImGui::BeginPopup("Node Context")) {
+        auto* context_node = node_editor::find_node(graph_, context_node_id_);
+        if (context_node != nullptr) {
+            ImGui::TextUnformatted(context_node->node_id.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem(context_node->enabled ? "Deactivate" : "Activate")) {
+                context_node->enabled = !context_node->enabled;
+                dirty_ = true;
+                reset_step();
+                refresh_validation();
+            }
+            if (ImGui::MenuItem("Delete")) {
+                selected_node_id_ = context_node->node_id;
+                delete_selected_node();
+            }
+        }
+        ImGui::EndPopup();
+    }
 
     // Del key: delete selected links and/or selected nodes
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !ImGui::IsAnyItemActive()) {
@@ -633,6 +744,11 @@ void node_editor::NodeEditorWidget::draw_inspector()
     ImGui::SeparatorText("Node");
     ImGui::Text("Id: %s", node->node_id.c_str());
     ImGui::Text("Plugin: %s", node->plugin_id.c_str());
+    if (ImGui::Checkbox("Enabled", &node->enabled)) {
+        dirty_ = true;
+        reset_step();
+        refresh_validation();
+    }
     if (input_text_string("Instance", node->instance_name)) {
         dirty_ = true;
         refresh_validation();
@@ -645,7 +761,7 @@ void node_editor::NodeEditorWidget::draw_inspector()
 
         ImGui::SeparatorText("Properties");
         for (const auto& property : descriptor->properties) {
-            if (!property.writable) {
+            if (!property.writable || is_replay_status_property(property.id)) {
                 ImGui::TextDisabled("%s: %s (read-only)", property.id.c_str(), property.type_name.c_str());
                 continue;
             }
@@ -714,6 +830,161 @@ void node_editor::NodeEditorWidget::draw_inspector()
     ImGui::Separator();
     if (ImGui::Button("Delete Node")) {
         delete_selected_node();
+    }
+
+    ImGui::EndChild();
+}
+
+void node_editor::NodeEditorWidget::draw_timeline()
+{
+    update_timeline_source();
+    const auto* selected_timeline_node = node_editor::find_node(graph_, timeline_source_node_id_);
+    const auto selected_timeline_path = selected_timeline_node != nullptr ? timeline_path_for_node(*selected_timeline_node) : std::filesystem::path{};
+    if (running_continuously_ || timeline_path_.empty() || selected_timeline_path != timeline_path_) {
+        RefreshTimeline();
+    }
+
+    ImGui::BeginChild("Record / Replay Timeline", ImVec2{0.0F, 190.0F}, true);
+    ImGui::TextUnformatted("Record / Replay Timeline");
+    ImGui::SameLine();
+
+    std::vector<EditorNode*> timeline_nodes;
+    for (auto& node : graph_.nodes) {
+        if (is_recorder_plugin_id(node.plugin_id) || is_replay_plugin_id(node.plugin_id)) {
+            timeline_nodes.push_back(&node);
+        }
+    }
+
+    ImGui::SetNextItemWidth(260.0F);
+    if (ImGui::BeginCombo("Source", timeline_source_node_id_.empty() ? "<none>" : timeline_source_node_id_.c_str())) {
+        for (auto* node : timeline_nodes) {
+            const bool selected = node->node_id == timeline_source_node_id_;
+            if (ImGui::Selectable(node->node_id.c_str(), selected)) {
+                timeline_source_node_id_ = node->node_id;
+                active_pause_marker_ids_.clear();
+                start_marker_id_.reset();
+                RefreshTimeline();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh##timeline")) {
+        RefreshTimeline();
+    }
+
+    const bool is_recorder = selected_timeline_node_is_recorder();
+    const bool is_replay = selected_timeline_node_is_replay();
+
+    if (is_recorder) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0F);
+        input_text_string("Marker Label", marker_label_text_);
+        ImGui::SameLine();
+        if (ImGui::Button("Add Marker") && runtime_) {
+            add_recording_marker();
+            RefreshTimeline();
+        }
+    }
+
+    if (is_replay) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0F);
+        ImGui::SliderFloat("Speed", &replay_speed_, 0.1F, 8.0F, "%.1fx");
+        ImGui::SameLine();
+        if (ImGui::Button("Start From Marker")) {
+            const auto marker = std::find_if(timeline_.markers.begin(), timeline_.markers.end(), [this](const auto& item) {
+                return start_marker_id_ && item.marker_id == *start_marker_id_;
+            });
+            if (marker != timeline_.markers.end()) {
+                ignored_pause_marker_id_ = marker->marker_id;
+                seek_replay_to(marker->timestamp_ns);
+                start_continuous_run();
+            }
+        }
+    }
+
+    if (timeline_.tracks.empty() && timeline_.markers.empty()) {
+        ImGui::TextDisabled("%s", timeline_path_.empty() ? "No timeline file selected." : ("No timeline data: " + timeline_path_.string()).c_str());
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::TextDisabled(
+        "File: %s | V%u | duration %s",
+        timeline_path_.string().c_str(),
+        timeline_.version,
+        format_time_seconds(timeline_.duration_ns).c_str()
+    );
+
+    const auto available = ImGui::GetContentRegionAvail();
+    const float label_width = 150.0F;
+    const float row_height = 22.0F;
+    const float track_height = std::max(55.0F, row_height * static_cast<float>(std::max<std::size_t>(timeline_.tracks.size(), 1)));
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 size{std::max(240.0F, available.x), std::min(90.0F, track_height)};
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->AddRectFilled(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(25, 25, 29, 255));
+    draw_list->AddRect(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(80, 80, 88, 255));
+
+    const auto first = timeline_.first_timestamp_ns;
+    const auto duration = std::max<std::uint64_t>(timeline_.duration_ns, 1);
+    const auto to_x = [&](std::uint64_t timestamp_ns) {
+        const auto relative = timestamp_ns > first ? timestamp_ns - first : 0;
+        const float t = std::clamp(static_cast<float>(static_cast<double>(relative) / static_cast<double>(duration)), 0.0F, 1.0F);
+        return origin.x + label_width + t * std::max(1.0F, size.x - label_width - 8.0F);
+    };
+
+    for (std::size_t track_index = 0; track_index < timeline_.tracks.size(); ++track_index) {
+        const auto& track = timeline_.tracks[track_index];
+        const float y = origin.y + 18.0F + static_cast<float>(track_index) * row_height;
+        draw_list->AddText(ImVec2{origin.x + 8.0F, y - 8.0F}, IM_COL32(210, 210, 218, 255), track.port.port_name.c_str());
+        draw_list->AddLine(ImVec2{origin.x + label_width, y}, ImVec2{origin.x + size.x - 8.0F, y}, IM_COL32(70, 70, 78, 255), 1.0F);
+        for (const auto timestamp : track.sample_timestamps_ns) {
+            const float x = to_x(timestamp);
+            draw_list->AddRectFilled(ImVec2{x - 1.5F, y - 5.0F}, ImVec2{x + 1.5F, y + 5.0F}, IM_COL32(80, 170, 240, 255));
+        }
+    }
+
+    const float top_y = origin.y + 4.0F;
+    const float bottom_y = origin.y + size.y - 4.0F;
+    for (const auto& marker : timeline_.markers) {
+        const float x = to_x(marker.timestamp_ns);
+        const bool active = active_pause_marker_ids_.find(marker.marker_id) != active_pause_marker_ids_.end();
+        draw_list->AddLine(ImVec2{x, top_y}, ImVec2{x, bottom_y}, active ? IM_COL32(255, 110, 95, 255) : IM_COL32(245, 200, 80, 255), 2.0F);
+        draw_list->AddText(ImVec2{x + 4.0F, top_y + 2.0F}, IM_COL32(245, 230, 170, 255), marker.label.empty() ? "M" : marker.label.c_str());
+    }
+
+    if (is_replay && replay_cursor_ns_ != 0) {
+        const float x = to_x(replay_cursor_ns_);
+        draw_list->AddLine(ImVec2{x, top_y}, ImVec2{x, bottom_y}, IM_COL32(130, 255, 150, 255), 2.0F);
+    }
+
+    ImGui::InvisibleButton("TimelineCanvas", size);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && is_recorder && runtime_) {
+        add_recording_marker();
+        RefreshTimeline();
+    }
+
+    if (!timeline_.markers.empty()) {
+        ImGui::SeparatorText("Markers");
+        for (const auto& marker : timeline_.markers) {
+            bool active = active_pause_marker_ids_.find(marker.marker_id) != active_pause_marker_ids_.end();
+            if (ImGui::Checkbox(("Pause##marker_" + std::to_string(marker.marker_id)).c_str(), &active)) {
+                if (active) {
+                    active_pause_marker_ids_.insert(marker.marker_id);
+                } else {
+                    active_pause_marker_ids_.erase(marker.marker_id);
+                }
+            }
+            ImGui::SameLine();
+            const bool start_selected = start_marker_id_ && *start_marker_id_ == marker.marker_id;
+            if (ImGui::RadioButton(("Start##marker_" + std::to_string(marker.marker_id)).c_str(), start_selected)) {
+                start_marker_id_ = marker.marker_id;
+            }
+            ImGui::SameLine();
+            ImGui::Text("%s  %s", format_time_seconds(marker.timestamp_ns - timeline_.first_timestamp_ns).c_str(), marker.label.c_str());
+        }
     }
 
     ImGui::EndChild();
@@ -905,6 +1176,8 @@ void node_editor::NodeEditorWidget::run_once_from_gui()
         }
 
         log(NodeEditorMessageLevel::info, "Graph run completed.");
+        RefreshTimeline();
+        update_replay_cursor_from_runtime();
         const auto summaries = read_output_summaries(*runtime_, graph_, descriptors_);
         for (const auto& summary : summaries) {
             log(NodeEditorMessageLevel::info, summary);
@@ -990,6 +1263,7 @@ void node_editor::NodeEditorWidget::pause_continuous_run()
     running_continuously_ = false;
     paused_ = true;
     continuous_job_.reset();
+    last_replay_submit_time_ = {};
     log(NodeEditorMessageLevel::info, "Paused after " + std::to_string(continuous_run_count_) + " iteration(s).");
     trim_messages();
     std::cout << "Continuous run paused after " << continuous_run_count_ << " iteration(s).\n" << std::flush;
@@ -999,6 +1273,7 @@ void node_editor::NodeEditorWidget::resume_continuous_run()
 {
     paused_ = false;
     running_continuously_ = true;
+    last_replay_submit_time_ = {};
     log(NodeEditorMessageLevel::info, "Continuous run resumed.");
     trim_messages();
     std::cout << "Continuous run resumed.\n" << std::flush;
@@ -1020,6 +1295,7 @@ void node_editor::NodeEditorWidget::start_continuous_run()
         running_continuously_ = true;
         continuous_job_.reset();
         continuous_run_count_ = 0;
+        last_replay_submit_time_ = {};
         log(NodeEditorMessageLevel::info, "Continuous run started.");
         trim_messages();
         std::cout << "Continuous run started.\n" << std::flush;
@@ -1061,6 +1337,22 @@ void node_editor::NodeEditorWidget::tick_continuous_run()
                 return;
             }
             ++continuous_run_count_;
+            update_replay_cursor_from_runtime();
+            if (ignored_pause_marker_id_) {
+                const auto ignored = std::find_if(timeline_.markers.begin(), timeline_.markers.end(), [this](const auto& marker) {
+                    return marker.marker_id == *ignored_pause_marker_id_;
+                });
+                if (ignored == timeline_.markers.end() || replay_cursor_ns_ >= ignored->timestamp_ns) {
+                    ignored_pause_marker_id_.reset();
+                }
+            }
+            if (const auto marker_timestamp = active_marker_before_next_replay_frame()) {
+                running_continuously_ = false;
+                paused_ = true;
+                continuous_job_.reset();
+                log(NodeEditorMessageLevel::info, "Replay paused before marker at " + format_time_seconds(*marker_timestamp - timeline_.first_timestamp_ns) + ".");
+                return;
+            }
             std::cout << "[Run " << continuous_run_count_ << "] completed\n" << std::flush;
         } else {
             try_call([this]() { runtime_->wait(*continuous_job_); });
@@ -1072,13 +1364,172 @@ void node_editor::NodeEditorWidget::tick_continuous_run()
         return;
     }
 
+    if (selected_timeline_node_is_replay()
+        && replay_cursor_ns_ != 0
+        && replay_next_ns_ > replay_cursor_ns_
+        && last_replay_submit_time_ != std::chrono::steady_clock::time_point{}) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto recorded_delta = replay_next_ns_ - replay_cursor_ns_;
+        const auto wait_seconds = static_cast<double>(recorded_delta) / 1'000'000'000.0 / std::max(0.1F, replay_speed_);
+        const auto elapsed_seconds = std::chrono::duration<double>(now - last_replay_submit_time_).count();
+        if (elapsed_seconds < wait_seconds) {
+            return;
+        }
+    }
+
     try_call([this]() {
         node_editor::apply_node_properties(*runtime_, graph_, descriptors_);
         continuous_job_ = runtime_->submit_run();
+        last_replay_submit_time_ = std::chrono::steady_clock::now();
     });
     if (!continuous_job_) {
         running_continuously_ = false;
     }
+}
+
+void node_editor::NodeEditorWidget::update_timeline_source()
+{
+    std::vector<std::string> source_ids;
+    for (const auto& node : graph_.nodes) {
+        if (is_recorder_plugin_id(node.plugin_id) || is_replay_plugin_id(node.plugin_id)) {
+            source_ids.push_back(node.node_id);
+        }
+    }
+
+    const auto selected_exists = std::find(source_ids.begin(), source_ids.end(), timeline_source_node_id_) != source_ids.end();
+    if (selected_exists) {
+        return;
+    }
+
+    if (source_ids.size() == 1) {
+        timeline_source_node_id_ = source_ids.front();
+    } else if (source_ids.empty()) {
+        timeline_source_node_id_.clear();
+        timeline_ = {};
+        timeline_path_.clear();
+    }
+}
+
+void node_editor::NodeEditorWidget::add_recording_marker()
+{
+    auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    if (node == nullptr || runtime_ == nullptr || !is_recorder_plugin_id(node->plugin_id)) {
+        return;
+    }
+
+    char label[64]{};
+    const auto label_size = std::min(marker_label_text_.size(), sizeof(label) - 1);
+    std::memcpy(label, marker_label_text_.data(), label_size);
+    runtime_->properties(node->node_id).write("MarkerLabel", label, sizeof(label));
+    const auto result = runtime_->invoke_node(node->node_id, "AddMarker");
+    if (result == PS_OK) {
+        log(NodeEditorMessageLevel::info, "Added recording marker.");
+    } else {
+        log(NodeEditorMessageLevel::warning, "Recorder marker entrypoint failed.");
+    }
+}
+
+bool node_editor::NodeEditorWidget::selected_timeline_node_is_recorder() const
+{
+    const auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    return node != nullptr && is_recorder_plugin_id(node->plugin_id);
+}
+
+bool node_editor::NodeEditorWidget::selected_timeline_node_is_replay() const
+{
+    const auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    return node != nullptr && is_replay_plugin_id(node->plugin_id);
+}
+
+std::filesystem::path node_editor::NodeEditorWidget::timeline_path_for_node(const EditorNode& node) const
+{
+    if (is_recorder_plugin_id(node.plugin_id)) {
+        const auto found = node.string_properties.find("OutputPath");
+        if (found != node.string_properties.end() && !found->second.empty()) {
+            return found->second;
+        }
+        return graph_.runtime_directory / (node.instance_name + ".rec");
+    }
+    if (is_replay_plugin_id(node.plugin_id)) {
+        const auto found = node.string_properties.find("InputPath");
+        if (found != node.string_properties.end()) {
+            return found->second;
+        }
+    }
+    return {};
+}
+
+std::optional<std::uint64_t> node_editor::NodeEditorWidget::active_marker_before_next_replay_frame() const
+{
+    if (!selected_timeline_node_is_replay() || replay_next_ns_ == 0 || replay_cursor_ns_ == 0) {
+        return std::nullopt;
+    }
+    for (const auto& marker : timeline_.markers) {
+        if (ignored_pause_marker_id_ && marker.marker_id == *ignored_pause_marker_id_) {
+            continue;
+        }
+        if (active_pause_marker_ids_.find(marker.marker_id) == active_pause_marker_ids_.end()) {
+            continue;
+        }
+        if (marker.timestamp_ns > replay_cursor_ns_ && marker.timestamp_ns <= replay_next_ns_) {
+            return marker.timestamp_ns;
+        }
+    }
+    return std::nullopt;
+}
+
+void node_editor::NodeEditorWidget::seek_replay_to(std::uint64_t timestamp_ns)
+{
+    auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    if (node == nullptr || !is_replay_plugin_id(node->plugin_id)) {
+        return;
+    }
+
+    refresh_validation();
+    if (!validation_messages_.empty()) {
+        log(NodeEditorMessageLevel::warning, "Graph validation failed: " + validation_messages_.front());
+        return;
+    }
+    if (!runtime_ || dirty_) {
+        stop_runtime_internal();
+        runtime_ = registry_->create_graph(make_runtime_graph_config());
+        dirty_ = false;
+    }
+
+    node_editor::apply_node_properties(*runtime_, graph_, descriptors_);
+    auto& properties = runtime_->properties(node->node_id);
+    const auto seek_timestamp = static_cast<std::int64_t>(std::min<std::uint64_t>(
+        timestamp_ns,
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
+    ));
+    std::int32_t seek_request{0};
+    properties.read("SeekRequest", &seek_request, sizeof(seek_request));
+    ++seek_request;
+    properties.write("SeekTimestampNs", &seek_timestamp, sizeof(seek_timestamp));
+    properties.write("SeekRequest", &seek_request, sizeof(seek_request));
+    replay_cursor_ns_ = 0;
+    replay_next_ns_ = timestamp_ns;
+    replay_end_reached_ = false;
+    last_replay_submit_time_ = {};
+}
+
+void node_editor::NodeEditorWidget::update_replay_cursor_from_runtime()
+{
+    const auto* node = node_editor::find_node(graph_, timeline_source_node_id_);
+    if (node == nullptr || runtime_ == nullptr || !is_replay_plugin_id(node->plugin_id)) {
+        return;
+    }
+
+    std::int64_t current{0};
+    std::int64_t next{0};
+    std::int32_t end_reached{0};
+    auto& properties = runtime_->properties(node->node_id);
+    properties.read("CurrentTimestampNs", &current, sizeof(current));
+    properties.read("NextTimestampNs", &next, sizeof(next));
+    properties.read("EndReached", &end_reached, sizeof(end_reached));
+    replay_cursor_ns_ = current > 0 ? static_cast<std::uint64_t>(current) : 0;
+    replay_next_ns_ = next > 0 ? static_cast<std::uint64_t>(next) : 0;
+    replay_end_reached_ = end_reached != 0;
 }
 
 void node_editor::NodeEditorWidget::try_call(std::function<void()> fn)

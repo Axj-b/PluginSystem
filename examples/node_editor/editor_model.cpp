@@ -43,6 +43,13 @@ bool is_replay_plugin_id(std::string_view plugin_id)
             && plugin_id[replay_prefix.size()] == '.');
 }
 
+bool is_replay_status_property(std::string_view property_id)
+{
+    return property_id == "CurrentTimestampNs"
+        || property_id == "NextTimestampNs"
+        || property_id == "EndReached";
+}
+
 std::string sanitize_replay_id_part(std::string_view value)
 {
     std::string result;
@@ -119,6 +126,7 @@ EditorGraph load_editor_graph(const std::filesystem::path& path)
     for (const auto& item : data.value("nodes", json::array())) {
         EditorNode node;
         node.ui_id = item.value("ui_id", graph.next_node_ui_id);
+        node.enabled = item.value("enabled", true);
         node.node_id = item.value("id", std::string{});
         node.plugin_id = item.value("plugin_id", std::string{});
         node.instance_name = item.value("instance_name", node.node_id);
@@ -197,6 +205,7 @@ void save_editor_graph(const std::filesystem::path& path, const EditorGraph& gra
     for (const auto& node : graph.nodes) {
         json item;
         item["ui_id"] = node.ui_id;
+        item["enabled"] = node.enabled;
         item["id"] = node.node_id;
         item["plugin_id"] = node.plugin_id;
         item["instance_name"] = node.instance_name;
@@ -326,6 +335,7 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
         errors.push_back("Graph has no nodes.");
     }
 
+    std::unordered_map<std::string, std::size_t> all_node_indices;
     std::unordered_map<std::string, std::size_t> node_indices;
     std::set<std::string> instance_names;
     for (std::size_t node_index = 0; node_index < graph.nodes.size(); ++node_index) {
@@ -334,9 +344,13 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
             errors.push_back("Node id cannot be empty.");
             continue;
         }
-        if (!node_indices.emplace(node.node_id, node_index).second) {
+        if (!all_node_indices.emplace(node.node_id, node_index).second) {
             errors.push_back("Duplicate node id: " + node.node_id);
         }
+        if (!node.enabled) {
+            continue;
+        }
+        node_indices.emplace(node.node_id, node_index);
         if (!instance_names.insert(node.instance_name).second) {
             errors.push_back("Duplicate instance name: " + node.instance_name);
         }
@@ -350,20 +364,28 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
             errors.push_back("Missing process entrypoint '" + node.process_entrypoint + "' on node " + node.node_id);
         }
     }
+    if (!graph.nodes.empty() && node_indices.empty()) {
+        errors.push_back("Graph has no enabled nodes.");
+    }
 
     std::unordered_map<std::string, std::string> input_sources;
     std::vector<std::vector<std::size_t>> adjacency(graph.nodes.size());
     std::vector<std::size_t> indegree(graph.nodes.size(), 0);
 
     for (const auto& edge : graph.edges) {
-        const auto source_node_found = node_indices.find(edge.source_node_id);
-        const auto target_node_found = node_indices.find(edge.target_node_id);
-        if (source_node_found == node_indices.end()) {
+        const auto source_node_exists = all_node_indices.find(edge.source_node_id);
+        const auto target_node_exists = all_node_indices.find(edge.target_node_id);
+        if (source_node_exists == all_node_indices.end()) {
             errors.push_back("Edge source node does not exist: " + edge.source_node_id);
             continue;
         }
-        if (target_node_found == node_indices.end()) {
+        if (target_node_exists == all_node_indices.end()) {
             errors.push_back("Edge target node does not exist: " + edge.target_node_id);
+            continue;
+        }
+        const auto source_node_found = node_indices.find(edge.source_node_id);
+        const auto target_node_found = node_indices.find(edge.target_node_id);
+        if (source_node_found == node_indices.end() || target_node_found == node_indices.end()) {
             continue;
         }
 
@@ -414,7 +436,8 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
     }
 
     std::deque<std::size_t> ready;
-    for (std::size_t index = 0; index < indegree.size(); ++index) {
+    for (const auto& item : node_indices) {
+        const auto index = item.second;
         if (indegree[index] == 0) {
             ready.push_back(index);
         }
@@ -432,7 +455,7 @@ std::vector<std::string> validate_editor_graph(const EditorGraph& graph, const D
             }
         }
     }
-    if (visited != graph.nodes.size()) {
+    if (visited != node_indices.size()) {
         errors.push_back("Graph contains a cycle.");
     }
 
@@ -445,7 +468,12 @@ GraphConfig make_graph_config(const EditorGraph& graph)
     config.blueprint_name = graph.blueprint_name;
     config.runtime_directory = graph.runtime_directory;
     config.worker_count = std::thread::hardware_concurrency();
+    std::unordered_set<std::string> enabled_node_ids;
     for (const auto& node : graph.nodes) {
+        if (!node.enabled) {
+            continue;
+        }
+        enabled_node_ids.insert(node.node_id);
         config.nodes.push_back(GraphNodeConfig{
             node.node_id,
             node.plugin_id,
@@ -456,6 +484,10 @@ GraphConfig make_graph_config(const EditorGraph& graph)
         });
     }
     for (const auto& edge : graph.edges) {
+        if (enabled_node_ids.find(edge.source_node_id) == enabled_node_ids.end()
+            || enabled_node_ids.find(edge.target_node_id) == enabled_node_ids.end()) {
+            continue;
+        }
         config.edges.push_back(GraphEdgeConfig{
             edge.source_node_id,
             edge.source_port_id,
@@ -525,12 +557,18 @@ std::vector<std::filesystem::path> merge_plugin_libraries(
 void apply_node_properties(pluginsystem::GraphRuntime& runtime, const EditorGraph& graph, const DescriptorIndex& descriptors)
 {
     for (const auto& node : graph.nodes) {
+        if (!node.enabled) {
+            continue;
+        }
         const auto* descriptor = find_descriptor(descriptors, node.plugin_id);
         if (descriptor == nullptr) {
             continue;
         }
 
         for (const auto& property : descriptor->properties) {
+            if (!property.writable || is_replay_status_property(property.id)) {
+                continue;
+            }
             auto& props = runtime.properties(node.node_id);
 
             if (property.type_name == "bool" && property.byte_size == sizeof(bool)) {

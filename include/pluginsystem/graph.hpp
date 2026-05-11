@@ -100,6 +100,7 @@ public:
     SharedPropertyBlock& properties(std::string_view node_id);
     const SharedPropertyBlock& properties(std::string_view node_id) const;
     const PluginDescriptor& node_descriptor(std::string_view node_id) const;
+    int32_t invoke_node(std::string_view node_id, std::string_view entrypoint_id, void* user_context = nullptr);
     void invoke_all(std::string_view entrypoint_id, void* user_context = nullptr);
 
     std::vector<GraphPortInfo> all_ports() const;

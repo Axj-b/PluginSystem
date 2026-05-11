@@ -2,6 +2,9 @@
 
 #include "editor_model.hpp"
 
+#include <recorder_plugins.hpp>
+
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -65,10 +68,13 @@ public:
     void ResumeContinuousRun();
     void StopRuntime();
     void StepNode();
+    void RefreshTimeline();
 
     const EditorGraph& graph() const noexcept { return graph_; }
     EditorGraph& graph() noexcept { return graph_; }
     const DescriptorIndex& descriptors() const noexcept { return descriptors_; }
+    const pluginsystem::builtins::RecordingTimeline& timeline() const noexcept { return timeline_; }
+    const std::string& timeline_source_node_id() const noexcept { return timeline_source_node_id_; }
     const std::vector<std::string>& validation_messages() const noexcept { return validation_messages_; }
     const std::vector<std::string>& log_messages() const noexcept { return messages_; }
     bool dirty() const noexcept { return dirty_; }
@@ -94,6 +100,7 @@ private:
     void draw_palette();
     void draw_canvas();
     void draw_inspector();
+    void draw_timeline();
     void draw_bottom_panel();
     void draw_plugin_windows();
     void draw_entrypoint_combo(const char* label, const pluginsystem::PluginDescriptor& descriptor, std::string& value);
@@ -110,6 +117,14 @@ private:
     void resume_continuous_run();
     void start_continuous_run();
     void tick_continuous_run();
+    void update_timeline_source();
+    void add_recording_marker();
+    bool selected_timeline_node_is_recorder() const;
+    bool selected_timeline_node_is_replay() const;
+    std::filesystem::path timeline_path_for_node(const EditorNode& node) const;
+    std::optional<std::uint64_t> active_marker_before_next_replay_frame() const;
+    void seek_replay_to(std::uint64_t timestamp_ns);
+    void update_replay_cursor_from_runtime();
     GraphConfig make_runtime_graph_config() const;
     void try_call(std::function<void()> fn);
     void try_update_replay_v2_node(EditorNode& node);
@@ -131,6 +146,7 @@ private:
     std::vector<std::string> validation_messages_;
     std::vector<std::string> messages_;
     std::string selected_node_id_;
+    std::string context_node_id_;
     bool dirty_{true};
     bool running_continuously_{false};
     bool paused_{false};
@@ -138,6 +154,18 @@ private:
     std::uint64_t continuous_run_count_{0};
     std::size_t step_cursor_{0};
     std::vector<std::string> step_node_ids_;
+    pluginsystem::builtins::RecordingTimeline timeline_;
+    std::string timeline_source_node_id_;
+    std::filesystem::path timeline_path_;
+    std::unordered_set<std::uint32_t> active_pause_marker_ids_;
+    std::optional<std::uint32_t> start_marker_id_;
+    std::optional<std::uint32_t> ignored_pause_marker_id_;
+    std::string marker_label_text_{"Marker"};
+    float replay_speed_{1.0F};
+    std::uint64_t replay_cursor_ns_{0};
+    std::uint64_t replay_next_ns_{0};
+    bool replay_end_reached_{false};
+    std::chrono::steady_clock::time_point last_replay_submit_time_{};
 };
 
 } // namespace pluginsystem::examples::node_editor

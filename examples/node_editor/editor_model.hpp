@@ -14,6 +14,7 @@ namespace pluginsystem::examples::node_editor {
 
 struct EditorNode {
     int ui_id{0};
+    bool enabled{true};
     std::string node_id;
     std::string plugin_id;
     std::string instance_name;

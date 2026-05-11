@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -245,6 +246,61 @@ void write_string_property(pluginsystem::SharedPropertyBlock& properties, std::s
     properties.write(property_id, buffer, sizeof(buffer));
 }
 
+void write_marker_label_property(pluginsystem::SharedPropertyBlock& properties, const std::string& value)
+{
+    char buffer[64]{};
+    const auto size = std::min(value.size(), sizeof(buffer) - 1);
+    std::memcpy(buffer, value.data(), size);
+    properties.write("MarkerLabel", buffer, sizeof(buffer));
+}
+
+void write_legacy_v2_recording(const std::filesystem::path& path)
+{
+#pragma pack(push, 1)
+    struct Preamble {
+        std::uint32_t magic;
+        std::uint32_t version;
+        std::uint32_t num_ports;
+        std::uint32_t data_offset;
+    };
+    struct PortSlot {
+        char type_name[64];
+        std::uint64_t byte_size;
+        char port_name[64];
+        std::uint32_t access_mode_raw;
+    };
+    struct FrameHeader {
+        std::uint64_t timestamp_ns;
+        std::uint64_t sequence;
+        std::uint32_t port_index;
+        std::uint32_t reserved;
+    };
+#pragma pack(pop)
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    Preamble preamble{};
+    preamble.magic = 0x52454350u;
+    preamble.version = 2;
+    preamble.num_ports = 1;
+    preamble.data_offset = static_cast<std::uint32_t>(sizeof(Preamble) + sizeof(PortSlot));
+    file.write(reinterpret_cast<const char*>(&preamble), sizeof(preamble));
+
+    PortSlot slot{};
+    std::strncpy(slot.type_name, "test.Sample", sizeof(slot.type_name) - 1);
+    slot.byte_size = sizeof(Sample);
+    std::strncpy(slot.port_name, "Legacy Output", sizeof(slot.port_name) - 1);
+    slot.access_mode_raw = static_cast<std::uint32_t>(pluginsystem::PortAccessMode::buffered_latest);
+    file.write(reinterpret_cast<const char*>(&slot), sizeof(slot));
+
+    FrameHeader frame{};
+    frame.timestamp_ns = 1234;
+    frame.sequence = 1;
+    frame.port_index = 0;
+    Sample payload{77};
+    file.write(reinterpret_cast<const char*>(&frame), sizeof(frame));
+    file.write(reinterpret_cast<const char*>(&payload), sizeof(payload));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -466,7 +522,6 @@ int main(int argc, char** argv)
     fanout->port("b", "output").read(&fanout_b, sizeof(fanout_b));
     assert(fanout_a.value == 13);
     assert(fanout_b.value == 103);
-
     const auto recording_path = std::filesystem::absolute(
         std::filesystem::path{"pluginsystem_test_runtime"} / "recorder_roundtrip.rec"
     );
@@ -481,13 +536,19 @@ int main(int argc, char** argv)
     recorder_config.nodes.push_back(pluginsystem::GraphNodeConfig{"recorder", "pluginsystem.builtin.recorder", "Recorder"});
     recorder_config.edges.push_back(pluginsystem::GraphEdgeConfig{"source", "output", "recorder", "Input0"});
     auto recorder_graph = registry.create_graph(recorder_config);
-    Sample recorder_input{4};
-    recorder_graph->port("source", "input").write(&recorder_input, sizeof(recorder_input));
     write_string_property(recorder_graph->properties("recorder"), "OutputPath", recording_path.string());
     std::int32_t append_mode = 0;
     recorder_graph->properties("recorder").write("AppendMode", &append_mode, sizeof(append_mode));
-    const auto recorder_job = recorder_graph->submit_run();
-    assert(recorder_graph->wait(recorder_job).result == PS_OK);
+
+    for (int value = 4; value <= 6; ++value) {
+        Sample recorder_input{value};
+        recorder_graph->port("source", "input").write(&recorder_input, sizeof(recorder_input));
+        const auto recorder_job = recorder_graph->submit_run();
+        assert(recorder_graph->wait(recorder_job).result == PS_OK);
+    }
+
+    write_marker_label_property(recorder_graph->properties("recorder"), "Interesting");
+    assert(recorder_graph->invoke_node("recorder", "AddMarker") == PS_OK);
     recorder_graph->stop();
 
     const auto recorded_ports = pluginsystem::builtins::read_recording_ports(recording_path.string());
@@ -496,6 +557,25 @@ int main(int argc, char** argv)
     assert(recorded_ports[0].byte_size == sizeof(Sample));
     assert(recorded_ports[0].port_name == "Output");
     assert(recorded_ports[0].access_mode == pluginsystem::PortAccessMode::buffered_latest);
+
+    const auto timeline = pluginsystem::builtins::read_recording_timeline(recording_path.string());
+    assert(timeline.version == 3);
+    assert(timeline.tracks.size() == 1);
+    assert(timeline.tracks[0].sample_timestamps_ns.size() == 3);
+    assert(timeline.markers.size() == 1);
+    assert(timeline.markers[0].label == "Interesting");
+    assert(timeline.markers[0].timestamp_ns == timeline.tracks[0].sample_timestamps_ns.back());
+
+    const auto legacy_path = std::filesystem::absolute(
+        std::filesystem::path{"pluginsystem_test_runtime"} / "legacy_v2.rec"
+    );
+    std::filesystem::remove(legacy_path);
+    write_legacy_v2_recording(legacy_path);
+    const auto legacy_timeline = pluginsystem::builtins::read_recording_timeline(legacy_path.string());
+    assert(legacy_timeline.version == 2);
+    assert(legacy_timeline.tracks.size() == 1);
+    assert(legacy_timeline.tracks[0].sample_timestamps_ns.size() == 1);
+    assert(legacy_timeline.markers.empty());
 
     registry.register_builtin(pluginsystem::builtins::make_replay("test.replay.roundtrip", recorded_ports));
     pluginsystem::GraphConfig replay_config;
@@ -509,11 +589,24 @@ int main(int argc, char** argv)
     write_string_property(replay_graph->properties("replay"), "InputPath", recording_path.string());
     std::int32_t loop = 0;
     replay_graph->properties("replay").write("Loop", &loop, sizeof(loop));
+    const auto seek_timestamp = static_cast<std::int64_t>(timeline.markers[0].timestamp_ns);
+    std::int32_t seek_request = 1;
+    replay_graph->properties("replay").write("SeekTimestampNs", &seek_timestamp, sizeof(seek_timestamp));
+    replay_graph->properties("replay").write("SeekRequest", &seek_request, sizeof(seek_request));
     const auto replay_job = replay_graph->submit_run();
     assert(replay_graph->wait(replay_job).result == PS_OK);
     Sample replay_output{};
     replay_graph->port("consumer", "output").read(&replay_output, sizeof(replay_output));
-    assert(replay_output.value == 15);
+    assert(replay_output.value == 17);
+    std::int64_t current_timestamp{};
+    std::int64_t next_timestamp{};
+    std::int32_t end_reached{};
+    replay_graph->properties("replay").read("CurrentTimestampNs", &current_timestamp, sizeof(current_timestamp));
+    replay_graph->properties("replay").read("NextTimestampNs", &next_timestamp, sizeof(next_timestamp));
+    replay_graph->properties("replay").read("EndReached", &end_reached, sizeof(end_reached));
+    assert(current_timestamp == seek_timestamp);
+    assert(next_timestamp == 0);
+    assert(end_reached == 1);
     replay_graph->stop();
 
     auto make_invalid_graph = [](std::string blueprint_name) {
